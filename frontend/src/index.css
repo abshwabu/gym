@@ -387,10 +387,14 @@ body {
   color: var(--text-muted);
 }
 
+.modal-content .form-label {
+  color: #e2e8f0; /* Brighter label text inside modals for better contrast */
+}
+
 .form-input {
   width: 100%;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  background-color: rgba(0, 0, 0, 0.25); /* Darker inset appearance for clarity */
+  border: 1px solid rgba(255, 255, 255, 0.16); /* Higher contrast border */
   border-radius: 8px;
   padding: 10px 14px;
   color: var(--text-main);
@@ -400,19 +404,20 @@ body {
 }
 
 .form-input::placeholder {
-  color: #4b5563;
+  color: #6b7280; /* Lighter placeholder text */
 }
 
 .form-input:focus {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px var(--accent-glow);
+  background-color: rgba(0, 0, 0, 0.4);
 }
 
 .form-select {
   width: 100%;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  background-color: rgba(0, 0, 0, 0.25); /* Consistent input background */
+  border: 1px solid rgba(255, 255, 255, 0.16); /* Consistent input border */
   border-radius: 8px;
   padding: 10px 14px;
   color: var(--text-main);
@@ -423,12 +428,19 @@ body {
   background-repeat: no-repeat;
   background-position: right 14px center;
   background-size: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+}
+
+.form-select option {
+  background-color: #1f2937 !important; /* Lighter dropdown box background */
+  color: #f8fafc !important; /* Brighter dropdown text */
 }
 
 .form-select:focus {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px var(--accent-glow);
+  background-color: rgba(0, 0, 0, 0.4);
 }
 
 /* Modals */
@@ -438,8 +450,8 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+  background-color: rgba(0, 0, 0, 0.75); /* Darker backdrop to emphasize the modal */
+  backdrop-filter: blur(8px); /* Stronger blur for visual separation */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -447,13 +459,13 @@ body {
 }
 
 .modal-content {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: #111827; /* Solid slate-900 background */
+  border: 1px solid rgba(255, 255, 255, 0.12); /* Clean border accent */
   border-radius: 12px;
   width: 100%;
   max-width: 480px;
-  padding: 24px;
-  box-shadow: var(--shadow-md);
+  padding: 28px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5); /* Stronger box shadow */
   position: relative;
 }
 

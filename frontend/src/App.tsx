@@ -651,6 +651,34 @@ export default function App() {
     };
   }, [token, queryClient]);
 
+  // Verify or Refresh License Token on session change / initial mount
+  useEffect(() => {
+    const fetchLicenseToken = async () => {
+      // If we are logged in, online, and not super admin, refresh the license token
+      if (token && isOnline && !user?.is_super_admin) {
+        try {
+          const response = await fetch('/api/license/refresh', {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.token) {
+              localStorage.setItem('license_token', data.token);
+            }
+          }
+        } catch (e) {
+          console.error('Auto license token refresh failed:', e);
+        }
+      }
+    };
+
+    fetchLicenseToken();
+  }, [token, isOnline, user]);
+
   // Force a manual outbox synchronization
   const triggerManualSync = async () => {
     if (!token || isSyncing || !isOnline) return;
