@@ -38,13 +38,13 @@ class AuthController extends Controller
                 $isOwnerOrAdmin = true;
             }
             foreach ($role->privileges as $privilege) {
-                $privileges[] = $privilege->id;
+                $privileges[] = $privilege->key;
             }
         }
 
         // If the user has Owner/Admin privileges, they get all system privileges implicitly.
         if ($isOwnerOrAdmin) {
-            $privileges = \App\Models\Privilege::pluck('id')->toArray();
+            $privileges = \App\Models\Privilege::pluck('key')->toArray();
         } else {
             $privileges = array_unique($privileges);
         }
@@ -79,12 +79,12 @@ class AuthController extends Controller
                 $isOwnerOrAdmin = true;
             }
             foreach ($role->privileges as $privilege) {
-                $privileges[] = $privilege->id;
+                $privileges[] = $privilege->key;
             }
         }
 
         if ($isOwnerOrAdmin) {
-            $privileges = \App\Models\Privilege::pluck('id')->toArray();
+            $privileges = \App\Models\Privilege::pluck('key')->toArray();
         } else {
             $privileges = array_unique($privileges);
         }
