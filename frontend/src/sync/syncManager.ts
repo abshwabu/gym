@@ -224,6 +224,14 @@ export class SyncManager {
           if (currentItem.method === 'create') {
             path = `/members/${currentItem.payload.member_id}/plans`;
             method = 'POST';
+          } else if (currentItem.method === 'update') {
+            if (currentItem.payload.status === 'frozen') {
+              path = `/member-plans/${currentItem.payload.id}/freeze`;
+              method = 'POST';
+            } else if (currentItem.payload.status === 'active') {
+              path = `/member-plans/${currentItem.payload.id}/unfreeze`;
+              method = 'POST';
+            }
           }
         }
 

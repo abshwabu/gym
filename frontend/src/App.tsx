@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, Activity, CreditCard, Clock, LogOut, CheckCircle, 
-  XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key
+  XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key, User
 } from 'lucide-react';
 import { db } from './db/gymDb';
 import { SyncManager } from './sync/syncManager';
@@ -54,7 +54,6 @@ const AcceptInvite = () => {
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Extract signed URL parameters
   const queryParams = new URLSearchParams(location.search);
   const expires = queryParams.get('expires');
   const signature = queryParams.get('signature');
@@ -189,6 +188,8 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const queueLength = useLiveQuery(() => db.outbox.where('status').equals('pending').count()) || 0;
+  const outboxItems = useLiveQuery(() => db.outbox.toArray()) || [];
+  const localMemberPlans = useLiveQuery(() => db.cache_member_plans.toArray()) || [];
 
   // Form states
   const [loginForm, setLoginForm] = useState({ email: '', password: '', tenant_slug: '' });
@@ -208,6 +209,16 @@ export default function App() {
     phone: '',
     status: 'Active',
     membership_plan_id: '',
+  });
+
+  // Member Profile modal
+  const [selectedMemberProfile, setSelectedMemberProfile] = useState<any>(null);
+  const [showAssignPlanModal, setShowAssignPlanModal] = useState(false);
+  const [assignPlanForm, setAssignPlanForm] = useState({
+    plan_id: '',
+    starts_at: new Date().toISOString().substring(0, 10),
+    expires_at: '',
+    manual_expiry: false,
   });
 
   // Plans modal form
@@ -239,6 +250,9 @@ export default function App() {
   // Search states
   const [checkinSearch, setCheckinSearch] = useState('');
   const [memberSearch, setMemberSearch] = useState('');
+
+  // Advisory check-in warning modal state
+  const [advisoryWarning, setAdvisoryWarning] = useState<{ member: any; plan: any; type: string } | null>(null);
 
   // Toast helper
   const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
@@ -410,7 +424,6 @@ export default function App() {
 
       const data = await response.json();
       
-      // Save credentials in client storage
       localStorage.setItem('gym_auth_token', data.token);
       localStorage.setItem('tenant_slug', data.tenant.slug);
       localStorage.setItem('user_privileges', JSON.stringify(data.privileges));
@@ -459,13 +472,32 @@ export default function App() {
   };
 
   // Log Check-in (Optimistic UI)
-  const handleCheckin = async (memberId: string) => {
+  const handleCheckin = async (memberId: string, force = false) => {
     const member = members.find((m: any) => m.id === memberId);
     if (!member) return;
 
-    if (member.status !== 'Active') {
-      showToast(`Cannot check in: Member status is "${member.status}"`, 'error');
-      return;
+    // Get active subscription
+    const activeSub = localMemberPlans.find((p: any) => p.member_id === memberId && p.status === 'active');
+    const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
+
+    // Run checkin warnings
+    if (!force) {
+      if (!activeSub) {
+        setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
+        return;
+      }
+      if (activeSub.status === 'frozen') {
+        setAdvisoryWarning({ member, plan, type: 'frozen' });
+        return;
+      }
+      if (new Date(activeSub.expires_at) < new Date()) {
+        setAdvisoryWarning({ member, plan, type: 'expired' });
+        return;
+      }
+      if (plan && plan.session_limit !== null && activeSub.sessions_used >= plan.session_limit) {
+        setAdvisoryWarning({ member, plan, type: 'over_limit' });
+        return;
+      }
     }
 
     const attendanceId = crypto.randomUUID();
@@ -473,15 +505,27 @@ export default function App() {
     const payload = {
       id: attendanceId,
       member_id: memberId,
+      member_plan_id: activeSub ? activeSub.id : null,
       checked_in_at,
       method: 'kiosk',
     };
 
     try {
       await SyncManager.queueWrite('attendances', 'create', attendanceId, payload);
+      
+      // Optimistically update sessions count in cache
+      if (activeSub) {
+        await db.cache_member_plans.update(activeSub.id, {
+          sessions_used: activeSub.sessions_used + 1,
+          status: plan && plan.session_limit !== null && (activeSub.sessions_used + 1) >= plan.session_limit ? 'expired' : 'active'
+        });
+      }
+
       queryClient.invalidateQueries({ queryKey: ['attendances'] });
+      queryClient.invalidateQueries({ queryKey: ['members'] });
       showToast(`Successfully checked in ${member.first_name}!`);
       setCheckinSearch('');
+      setAdvisoryWarning(null);
     } catch (e) {
       showToast('Error recording check-in.', 'error');
     }
@@ -516,7 +560,7 @@ export default function App() {
   // Upsert Plan
   const handlePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const planId = editingMember ? editingMember.id : crypto.randomUUID();
+    const planId = crypto.randomUUID();
 
     const payload = {
       name: planForm.name,
@@ -540,6 +584,103 @@ export default function App() {
     }
   };
 
+  // Assign Plan to member (Optimistic UI)
+  const handleAssignPlanSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMemberProfile) return;
+
+    const subId = crypto.randomUUID();
+    const plan = plans.find((p: any) => p.id === assignPlanForm.plan_id);
+    if (!plan) return;
+
+    const payload = {
+      member_id: selectedMemberProfile.id,
+      plan_id: assignPlanForm.plan_id,
+      starts_at: new Date(assignPlanForm.starts_at).toISOString(),
+      expires_at: new Date(assignPlanForm.expires_at).toISOString(),
+      status: 'active',
+      sessions_used: 0,
+    };
+
+    try {
+      await SyncManager.queueWrite('member_plans', 'create', subId, payload);
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      showToast(`Plan "${plan.name}" successfully assigned.`);
+      setShowAssignPlanModal(false);
+      
+      // Update selected profile view
+      const freshSub = { ...payload, id: subId, plan };
+      setSelectedMemberProfile((prev: any) => ({
+        ...prev,
+        active_plan: freshSub
+      }));
+    } catch (err) {
+      showToast('Error assigning plan.', 'error');
+    }
+  };
+
+  // Freeze / Unfreeze plan subscription (Optimistic UI)
+  const handleToggleFreeze = async (subscription: any) => {
+    const isFrozen = subscription.status === 'frozen';
+    const actionStatus = isFrozen ? 'active' : 'frozen';
+
+    try {
+      await SyncManager.queueWrite('member_plans', 'update', subscription.id, {
+        id: subscription.id,
+        status: actionStatus,
+      });
+
+      // Optimistically update local IndexedDB cache table immediately
+      await db.cache_member_plans.update(subscription.id, {
+        status: actionStatus,
+        frozen_at: isFrozen ? null : new Date().toISOString(),
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+      
+      setSelectedMemberProfile((prev: any) => ({
+        ...prev,
+        active_plan: {
+          ...prev.active_plan,
+          status: actionStatus,
+          frozen_at: isFrozen ? null : new Date().toISOString()
+        }
+      }));
+
+      showToast(isFrozen ? 'Subscription unfrozen.' : 'Subscription frozen.');
+    } catch (e) {
+      showToast('Error modifying freeze state.', 'error');
+    }
+  };
+
+  // Dynamic Expiry Date Calculator on Plan Form selections
+  useEffect(() => {
+    const plan = plans.find((p: any) => p.id === assignPlanForm.plan_id);
+    if (!plan || assignPlanForm.manual_expiry) return;
+
+    const starts = new Date(assignPlanForm.starts_at);
+    let expires = new Date(starts);
+
+    if (plan.billing_cycle === 'weekly') {
+      expires.setDate(starts.getDate() + 7);
+    } else if (plan.billing_cycle === 'monthly') {
+      expires.setMonth(starts.getMonth() + 1);
+    } else if (plan.billing_cycle === 'quarterly') {
+      expires.setMonth(starts.getMonth() + 3);
+    } else if (plan.billing_cycle === 'annual') {
+      expires.setFullYear(starts.getFullYear() + 1);
+    } else if (plan.billing_cycle === 'custom_days' && plan.custom_cycle_days) {
+      expires.setDate(starts.getDate() + plan.custom_cycle_days);
+    } else {
+      expires.setFullYear(starts.getFullYear() + 10); // lifetime fallback
+    }
+
+    setAssignPlanForm(prev => ({
+      ...prev,
+      expires_at: expires.toISOString().substring(0, 10),
+    }));
+  }, [assignPlanForm.plan_id, assignPlanForm.starts_at, assignPlanForm.manual_expiry, plans]);
+
   // Create/Edit Role
   const handleRoleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -549,7 +690,6 @@ export default function App() {
       let roleId = editingRole ? editingRole.id : null;
 
       if (editingRole) {
-        // Edit existing Role Name
         const resName = await fetch(`/api/roles/${roleId}`, {
           method: 'PATCH',
           headers: {
@@ -562,7 +702,6 @@ export default function App() {
         });
         if (!resName.ok) throw new Error('Failed to update role name.');
       } else {
-        // Create new role
         const resCreate = await fetch('/api/roles', {
           method: 'POST',
           headers: {
@@ -578,7 +717,6 @@ export default function App() {
         roleId = newRole.id;
       }
 
-      // Sync Privileges checklist
       const resPrivs = await fetch(`/api/roles/${roleId}/privileges`, {
         method: 'POST',
         headers: {
@@ -652,7 +790,6 @@ export default function App() {
         throw new Error(data.message || 'Failed to invite staff.');
       }
 
-      // Convert backend absolute API signed link to frontend routing path link
       const serverUrl = new URL(data.activation_url);
       const frontendActivationUrl = `${window.location.origin}/accept-invite/${data.user.id}${serverUrl.search}`;
       
@@ -685,7 +822,7 @@ export default function App() {
       const frontendActivationUrl = `${window.location.origin}/accept-invite/${userId}${serverUrl.search}`;
 
       setGeneratedInviteUrl(frontendActivationUrl);
-      showToast('New activation link generated.');
+      showToast('New invitation link generated.');
     } catch (err: any) {
       showToast(err.message || 'Error generating link.', 'error');
     }
@@ -748,20 +885,33 @@ export default function App() {
     }
   };
 
-  // Filter members list by search keyword
-  const filteredMembers = members.filter((m: any) => {
-    const full = `${m.first_name} ${m.last_name}`.toLowerCase();
-    return full.includes(memberSearch.toLowerCase()) || 
-           (m.phone && m.phone.includes(memberSearch)) || 
-           (m.email && m.email.toLowerCase().includes(memberSearch.toLowerCase()));
-  });
+  // Retry conflict outbox writes
+  const handleRetryConflict = async (item: any) => {
+    await db.outbox.update(item.localId!, { status: 'pending' });
+    showToast('Retrying outbox synchronization in background.');
+    if (token) {
+      SyncManager.syncNow(token).then(() => queryClient.invalidateQueries());
+    }
+  };
 
-  const filteredCheckinMembers = checkinSearch.trim() === ''
-    ? []
-    : members.filter((m: any) => {
-        const full = `${m.first_name} ${m.last_name}`.toLowerCase();
-        return m.status === 'Active' && (full.includes(checkinSearch.toLowerCase()) || (m.phone && m.phone.includes(checkinSearch)));
-      }).slice(0, 5);
+  // Discard conflict outbox writes
+  const handleDiscardConflict = async (id: number) => {
+    await db.outbox.delete(id);
+    showToast('Conflicted transaction discarded.');
+  };
+
+  const getSyncStatusIcon = (clientUuid: string) => {
+    const item = outboxItems.find(i => i.clientUuid === clientUuid);
+    if (!item) return <span title="Synced"><CheckCircle size={14} style={{ color: 'var(--status-active)' }} /></span>;
+    
+    if (item.status === 'pending') {
+      return <span title="Pending offline sync"><RefreshCw size={14} className="spin" style={{ color: 'var(--status-offline)' }} /></span>;
+    }
+    if (item.status === 'conflict') {
+      return <span title="Sync conflict logged"><XCircle size={14} style={{ color: 'var(--status-inactive)' }} /></span>;
+    }
+    return <span title="Synced"><CheckCircle size={14} style={{ color: 'var(--status-active)' }} /></span>;
+  };
 
   const privilegeList = [
     { key: 'members.view', label: 'View Member Directory', category: 'Members' },
@@ -780,6 +930,23 @@ export default function App() {
     { key: 'staff.view', label: 'View Staff Directory', category: 'Staff' },
     { key: 'staff.invite', label: 'Invite Staff Members', category: 'Staff' },
   ];
+
+  const conflictItems = outboxItems.filter(i => i.status === 'conflict');
+
+  // Filter members list by search keyword
+  const filteredMembers = members.filter((m: any) => {
+    const full = `${m.first_name} ${m.last_name}`.toLowerCase();
+    return full.includes(memberSearch.toLowerCase()) || 
+           (m.phone && m.phone.includes(memberSearch)) || 
+           (m.email && m.email.toLowerCase().includes(memberSearch.toLowerCase()));
+  });
+
+  const filteredCheckinMembers = checkinSearch.trim() === ''
+    ? []
+    : members.filter((m: any) => {
+        const full = `${m.first_name} ${m.last_name}`.toLowerCase();
+        return m.status === 'Active' && (full.includes(checkinSearch.toLowerCase()) || (m.phone && m.phone.includes(checkinSearch)));
+      }).slice(0, 5);
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
@@ -960,6 +1127,34 @@ export default function App() {
                     {/* Dashboard view */}
                     <Route path="/" element={
                       <div>
+                        {/* Conflict resolution panel */}
+                        {conflictItems.length > 0 && (
+                          <div className="card" style={{ border: '1px solid var(--status-inactive)', backgroundColor: 'rgba(239, 68, 68, 0.05)', marginBottom: '32px', textAlign: 'left' }}>
+                            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--status-inactive)', fontSize: '16px', fontWeight: 'bold', marginBottom: '12px' }}>
+                              <XCircle size={20} />
+                              <span>Needs Review: Sync Conflicts Detected ({conflictItems.length})</span>
+                            </h3>
+                            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                              Some offline updates could not be synchronized automatically. Please reconcile them below.
+                            </p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {conflictItems.map(item => (
+                                <div key={item.localId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', backgroundColor: 'var(--bg-primary)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                  <div style={{ fontSize: '13px' }}>
+                                    <span style={{ fontWeight: 'bold', textTransform: 'uppercase', color: 'var(--accent-purple)' }}>{item.entity}</span>
+                                    <span style={{ margin: '0 8px', color: 'var(--text-muted)' }}>|</span>
+                                    <span>Record: {item.payload.name || item.payload.first_name || item.clientUuid}</span>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button onClick={() => handleRetryConflict(item)} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>Retry Sync</button>
+                                    <button onClick={() => handleDiscardConflict(item.localId!)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>Discard</button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="stats-grid">
                           <div className="card stat-card">
                             <div className="stat-icon">
@@ -1081,13 +1276,13 @@ export default function App() {
                                   <th>Email</th>
                                   <th>Phone</th>
                                   <th>Status</th>
-                                  {hasPrivilege('members.create') && <th>Actions</th>}
+                                  <th>Actions</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {filteredMembers.length === 0 ? (
                                   <tr>
-                                    <td colSpan={hasPrivilege('members.create') ? 5 : 4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+                                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
                                       No members found.
                                     </td>
                                   </tr>
@@ -1102,24 +1297,38 @@ export default function App() {
                                           {member.status}
                                         </span>
                                       </td>
-                                      {hasPrivilege('members.create') && (
-                                        <td>
+                                      <td>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
                                           <button onClick={() => {
-                                            setEditingMember(member);
-                                            setMemberForm({
-                                              first_name: member.first_name,
-                                              last_name: member.last_name,
-                                              email: member.email || '',
-                                              phone: member.phone || '',
-                                              status: member.status,
-                                              membership_plan_id: '',
+                                            const activeSub = localMemberPlans.find((p: any) => p.member_id === member.id && p.status === 'active');
+                                            const activePlan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
+                                            setSelectedMemberProfile({
+                                              ...member,
+                                              active_plan: activeSub ? { ...activeSub, plan: activePlan } : null,
+                                              subscriptions: localMemberPlans.filter((p: any) => p.member_id === member.id),
+                                              attendances: attendances.filter((a: any) => a.member_id === member.id),
                                             });
-                                            setShowMemberModal(true);
                                           }} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '13px', borderRadius: '8px' }}>
-                                            Edit
+                                            Profile
                                           </button>
-                                        </td>
-                                      )}
+                                          {hasPrivilege('members.create') && (
+                                            <button onClick={() => {
+                                              setEditingMember(member);
+                                              setMemberForm({
+                                                first_name: member.first_name,
+                                                last_name: member.last_name,
+                                                email: member.email || '',
+                                                phone: member.phone || '',
+                                                status: member.status,
+                                                membership_plan_id: '',
+                                              });
+                                              setShowMemberModal(true);
+                                            }} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '13px', borderRadius: '8px' }}>
+                                              Edit
+                                            </button>
+                                          )}
+                                        </div>
+                                      </td>
                                     </tr>
                                   ))
                                 )}
@@ -1191,6 +1400,7 @@ export default function App() {
                             <table className="custom-table">
                               <thead>
                                 <tr>
+                                  <th>Sync</th>
                                   <th>Member</th>
                                   <th>Method</th>
                                   <th>Checked In At</th>
@@ -1199,7 +1409,7 @@ export default function App() {
                               <tbody>
                                 {attendances.length === 0 ? (
                                   <tr>
-                                    <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+                                    <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
                                       No check-in logs recorded.
                                     </td>
                                   </tr>
@@ -1208,6 +1418,7 @@ export default function App() {
                                     const member = members.find((m: any) => m.id === log.member_id);
                                     return (
                                       <tr key={log.id}>
+                                        <td>{getSyncStatusIcon(log.id)}</td>
                                         <td style={{ fontWeight: '600' }}>
                                           {member ? `${member.first_name} ${member.last_name}` : 'Unknown Member'}
                                         </td>
@@ -1391,6 +1602,148 @@ export default function App() {
               </div>
             </div>
 
+            {/* Member Profile Modal */}
+            {selectedMemberProfile && (
+              <div className="modal-overlay">
+                <div className="modal-card" style={{ maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto', textAlign: 'left' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '20px', fontWeight: 'bold' }}>
+                      <User size={24} style={{ color: 'var(--accent-purple)' }} />
+                      <span>{selectedMemberProfile.first_name} {selectedMemberProfile.last_name}</span>
+                    </h3>
+                    <span className={`badge badge-${selectedMemberProfile.status.toLowerCase()}`}>{selectedMemberProfile.status}</span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                    <div>
+                      <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '8px' }}>Personal Info</h4>
+                      <p style={{ fontSize: '14px', marginBottom: '4px' }}><strong>Email:</strong> {selectedMemberProfile.email || 'N/A'}</p>
+                      <p style={{ fontSize: '14px' }}><strong>Phone:</strong> {selectedMemberProfile.phone || 'N/A'}</p>
+                    </div>
+
+                    <div>
+                      <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '8px' }}>Current Subscription</h4>
+                      {selectedMemberProfile.active_plan ? (
+                        <div style={{ padding: '12px', backgroundColor: 'var(--bg-primary)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '15px', display: 'flex', justifyContent: 'space-between' }}>
+                            <span>{selectedMemberProfile.active_plan.plan?.name || 'Assigned Plan'}</span>
+                            <span className={`badge badge-${selectedMemberProfile.active_plan.status}`}>{selectedMemberProfile.active_plan.status}</span>
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                            Expires: {new Date(selectedMemberProfile.active_plan.expires_at).toLocaleDateString()}
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Sessions: {selectedMemberProfile.active_plan.plan?.session_limit !== null ? `${selectedMemberProfile.active_plan.sessions_used} / ${selectedMemberProfile.active_plan.plan?.session_limit}` : `${selectedMemberProfile.active_plan.sessions_used} used (unlimited)`}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                            {hasPrivilege('members.create') && (
+                              <button onClick={() => handleToggleFreeze(selectedMemberProfile.active_plan)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', width: '100%' }}>
+                                {selectedMemberProfile.active_plan.status === 'frozen' ? 'Unfreeze' : 'Freeze'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>No active subscription plan.</p>
+                          {hasPrivilege('members.create') && (
+                            <button onClick={() => {
+                              setAssignPlanForm({ plan_id: plans[0]?.id || '', starts_at: new Date().toISOString().substring(0, 10), expires_at: '', manual_expiry: false });
+                              setShowAssignPlanModal(true);
+                            }} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+                              Assign Membership Plan
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Attendance Log list */}
+                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                    <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '12px' }}>Attendance History ({selectedMemberProfile.attendances?.length || 0})</h4>
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '10px' }}>
+                      {(!selectedMemberProfile.attendances || selectedMemberProfile.attendances.length === 0) ? (
+                        <div style={{ padding: '16px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>No attendances logged.</div>
+                      ) : (
+                        selectedMemberProfile.attendances.map((att: any) => (
+                          <div key={att.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border-color)' }}>
+                            <span style={{ fontSize: '13px' }}>{new Date(att.checked_in_at).toLocaleString()}</span>
+                            <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{att.method || 'Kiosk'}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
+                    <button onClick={() => setSelectedMemberProfile(null)} className="btn btn-secondary">Close Profile</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Assign Plan Modal */}
+            {showAssignPlanModal && (
+              <div className="modal-overlay">
+                <div className="modal-card" style={{ zIndex: 1100 }}>
+                  <h3 className="modal-title">Assign Membership Plan</h3>
+                  <form onSubmit={handleAssignPlanSubmit}>
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="plan-select">Select Plan</label>
+                      <select id="plan-select" className="form-select" value={assignPlanForm.plan_id} onChange={e => setAssignPlanForm({ ...assignPlanForm, plan_id: e.target.value })}>
+                        {plans.map((p: any) => (
+                          <option key={p.id} value={p.id}>{p.name} - ${p.price}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="starts-date">Starts At</label>
+                      <input id="starts-date" type="date" className="form-input" required value={assignPlanForm.starts_at} onChange={e => setAssignPlanForm({ ...assignPlanForm, starts_at: e.target.value })} />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="expires-date">Expires At</label>
+                      <input id="expires-date" type="date" className="form-input" required disabled={!assignPlanForm.manual_expiry} value={assignPlanForm.expires_at} onChange={e => setAssignPlanForm({ ...assignPlanForm, expires_at: e.target.value })} />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={assignPlanForm.manual_expiry} onChange={e => setAssignPlanForm({ ...assignPlanForm, manual_expiry: e.target.checked })} />
+                        <span>Override computed date manually</span>
+                      </label>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+                      <button type="button" onClick={() => setShowAssignPlanModal(false)} className="btn btn-secondary">Cancel</button>
+                      <button type="submit" className="btn btn-primary">Confirm Assignment</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Advisory Warnings checkin Modal */}
+            {advisoryWarning && (
+              <div className="modal-overlay">
+                <div className="modal-card" style={{ zIndex: 1200 }}>
+                  <h3 className="modal-title" style={{ color: 'var(--status-offline)', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <Info size={24} />
+                    <span>Check-in Advisory Warning</span>
+                  </h3>
+                  <p style={{ margin: '16px 0', fontSize: '14px', lineHeight: 1.6, textAlign: 'left' }}>
+                    Member <strong>{advisoryWarning.member.first_name} {advisoryWarning.member.last_name}</strong> is flagged:
+                    {advisoryWarning.type === 'no_plan' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Has no active membership subscription.</span>}
+                    {advisoryWarning.type === 'frozen' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Subscription plan is frozen.</span>}
+                    {advisoryWarning.type === 'expired' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Subscription plan is expired.</span>}
+                    {advisoryWarning.type === 'over_limit' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Session visit limits exceeded ({advisoryWarning.plan?.session_limit} visits max).</span>}
+                  </p>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                    <button onClick={() => setAdvisoryWarning(null)} className="btn btn-secondary" style={{ width: '50%' }}>Cancel check-in</button>
+                    <button onClick={() => handleCheckin(advisoryWarning.member.id, true)} className="btn btn-primary" style={{ width: '50%', backgroundColor: 'var(--status-offline)' }}>Proceed Anyway</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Members Creation Modal */}
             {showMemberModal && (
               <div className="modal-overlay">
@@ -1494,7 +1847,6 @@ export default function App() {
                     <div className="form-group">
                       <label className="form-label" style={{ marginBottom: '12px' }}>Role Privileges checklist</label>
                       
-                      {/* Privileges grouped by categories */}
                       {Array.from(new Set(privilegeList.map(p => p.category))).map(category => (
                         <div key={category} style={{ marginBottom: '20px' }}>
                           <h4 style={{ fontSize: '13px', color: 'var(--accent-purple)', textTransform: 'uppercase', marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
