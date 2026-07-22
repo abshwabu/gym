@@ -12,6 +12,7 @@ use App\Http\Controllers\SyncController;
 use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\PlatformController;
+use App\Http\Controllers\LicenseController;
 
 // Unauthenticated routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -26,12 +27,32 @@ Route::middleware(['auth:sanctum', 'super_admin'])->prefix('platform')->group(fu
     Route::patch('/tenants/{id}/suspend', [PlatformController::class, 'suspend']);
     Route::patch('/tenants/{id}/activate', [PlatformController::class, 'activate']);
     Route::post('/tenants/{id}/reset-owner-password', [PlatformController::class, 'resetOwnerPassword']);
+
+    // Platform Subscription Plans CRUD
+    Route::get('/subscription-plans', [PlatformController::class, 'plansIndex']);
+    Route::post('/subscription-plans', [PlatformController::class, 'plansStore']);
+    Route::patch('/subscription-plans/{id}', [PlatformController::class, 'plansUpdate']);
+    Route::delete('/subscription-plans/{id}', [PlatformController::class, 'plansDestroy']);
+
+    // Platform Licenses Management
+    Route::get('/tenants/{id}/licenses', [PlatformController::class, 'tenantLicenses']);
+    Route::post('/tenants/{id}/licenses', [PlatformController::class, 'issueLicense']);
+    Route::patch('/licenses/{licenseId}/extend', [PlatformController::class, 'extendLicense']);
+    Route::patch('/licenses/{licenseId}/revoke', [PlatformController::class, 'revokeLicense']);
+
+    // Impersonation
+    Route::post('/tenants/{id}/impersonate', [PlatformController::class, 'impersonate']);
+    Route::post('/impersonate/end', [PlatformController::class, 'endImpersonate']);
+    Route::get('/impersonation-logs', [PlatformController::class, 'impersonationLogs']);
 });
 
 // Authenticated, tenant-scoped routes
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Client license token refresh
+    Route::post('/license/refresh', [LicenseController::class, 'refresh']);
 
     // Staff invitations & management
     Route::get('/staff', [InvitationController::class, 'index'])->middleware('privilege:staff.view');

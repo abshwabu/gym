@@ -43,6 +43,18 @@ class InvitationController extends Controller
             return response()->json(['message' => 'A user with this email already exists in your tenant.'], 422);
         }
 
+        // Check staff limits set by platform active subscription
+        $license = \App\Models\License::where('tenant_id', $tenantId)
+            ->where('status', 'active')
+            ->first();
+
+        if ($license && $license->subscriptionPlan) {
+            $max = $license->subscriptionPlan->max_staff_users;
+            if ($max !== null && User::count() >= $max) {
+                return response()->json(['message' => 'License limit exceeded: maximum staff members reached.'], 422);
+            }
+        }
+
         // Create user with 'invited' status
         $user = User::create([
             'name' => $request->name,

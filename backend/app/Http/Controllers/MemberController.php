@@ -62,6 +62,19 @@ class MemberController extends Controller
                 'status' => $request->input('status'),
             ]);
         } else {
+            // Check member limits set by platform active subscription
+            $tenantId = \App\Services\TenantContext::getTenantId();
+            $license = \App\Models\License::where('tenant_id', $tenantId)
+                ->where('status', 'active')
+                ->first();
+
+            if ($license && $license->subscriptionPlan) {
+                $max = $license->subscriptionPlan->max_members;
+                if ($max !== null && \App\Models\Member::count() >= $max) {
+                    return response()->json(['message' => 'License limit exceeded: maximum members reached.'], 422);
+                }
+            }
+
             // Create a new member record with the client's UUID
             $member = Member::create([
                 'id' => $id,

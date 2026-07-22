@@ -31,6 +31,9 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Seed default platform subscription plans
+        $this->call(SubscriptionPlanSeeder::class);
+
         // 1. Seed global privileges (UUIDs auto-generated)
         $privileges = [
             // Members
