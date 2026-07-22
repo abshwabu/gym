@@ -17,6 +17,11 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\FinanceReportController;
+use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\StaffShiftController;
+use App\Http\Controllers\StaffAttendanceController;
+use App\Http\Controllers\LeaveRequestController;
+use App\Http\Controllers\PayrollController;
 
 // Unauthenticated routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -117,4 +122,30 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     // Finance Reports
     Route::get('/finance/reports/revenue', [FinanceReportController::class, 'revenue'])->middleware('privilege:finance.reports.view');
     Route::get('/finance/reports/outstanding', [FinanceReportController::class, 'outstanding'])->middleware('privilege:finance.reports.view');
+
+    // HR Employee Profiles
+    Route::get('/employees', [EmployeeController::class, 'index'])->middleware('privilege:hr.staff.manage');
+    Route::post('/employees', [EmployeeController::class, 'store'])->middleware('privilege:hr.staff.manage');
+    Route::patch('/employees/{employee}', [EmployeeController::class, 'update'])->middleware('privilege:hr.staff.manage');
+
+    // HR Shifts
+    Route::get('/shifts', [StaffShiftController::class, 'index'])->middleware('privilege:hr.shifts.manage');
+    Route::post('/shifts', [StaffShiftController::class, 'store'])->middleware('privilege:hr.shifts.manage');
+    Route::patch('/shifts/{shift}', [StaffShiftController::class, 'update'])->middleware('privilege:hr.shifts.manage');
+    Route::delete('/shifts/{shift}', [StaffShiftController::class, 'destroy'])->middleware('privilege:hr.shifts.manage');
+
+    // HR Staff Attendance (Clock-In/Clock-Out & Bulk sync)
+    Route::post('/staff-attendance/clock-in', [StaffAttendanceController::class, 'clockIn'])->middleware('privilege:hr.attendance.view');
+    Route::post('/staff-attendance/clock-out', [StaffAttendanceController::class, 'clockOut'])->middleware('privilege:hr.attendance.view');
+    Route::post('/staff-attendance/bulk', [StaffAttendanceController::class, 'bulk'])->middleware('privilege:hr.attendance.view');
+
+    // HR Leave Requests
+    Route::get('/leave-requests', [LeaveRequestController::class, 'index'])->middleware('privilege:hr.staff.manage');
+    Route::post('/leave-requests', [LeaveRequestController::class, 'store'])->middleware('privilege:hr.staff.manage');
+    Route::patch('/leave-requests/{id}/approve', [LeaveRequestController::class, 'approve'])->middleware('privilege:hr.leave.approve');
+    Route::patch('/leave-requests/{id}/reject', [LeaveRequestController::class, 'reject'])->middleware('privilege:hr.leave.approve');
+
+    // HR Payroll Runs
+    Route::post('/payroll-runs', [PayrollController::class, 'store'])->middleware('privilege:hr.payroll.manage');
+    Route::patch('/payroll-runs/{id}/finalize', [PayrollController::class, 'finalize'])->middleware('privilege:hr.payroll.manage');
 });

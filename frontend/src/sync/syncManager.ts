@@ -244,6 +244,49 @@ export class SyncManager {
           }
         }
 
+        // Group contiguous staff attendances to make a bulk call
+        if (currentItem.entity === 'staff_attendance' && currentItem.method === 'create') {
+          const batch: OutboxItem[] = [];
+          let j = index;
+          while (
+            j < pendingItems.length &&
+            pendingItems[j].entity === 'staff_attendance' &&
+            pendingItems[j].method === 'create'
+          ) {
+            batch.push(pendingItems[j]);
+            j++;
+          }
+
+          const payloadBatch = batch.map(item => ({
+            ...item.payload,
+            id: item.clientUuid,
+          }));
+
+          const { status, data } = await this.apiRequest('/staff-attendance/bulk', 'POST', {
+            attendances: payloadBatch,
+          }, token);
+
+          if (status === 200 && data.results) {
+            for (let k = 0; k < batch.length; k++) {
+              const outboxItem = batch[k];
+              const res = data.results.find((r: any) => r.id === outboxItem.clientUuid);
+              if (res) {
+                await db.outbox.update(outboxItem.localId!, { status: 'synced' });
+              } else {
+                await db.outbox.update(outboxItem.localId!, { status: 'conflict' });
+              }
+            }
+            index = j;
+            continue;
+          } else {
+            for (const item of batch) {
+              await db.outbox.update(item.localId!, { status: 'conflict' });
+            }
+            index = j;
+            continue;
+          }
+        }
+
         // 2. Individual endpoint uploads for editable entities
         let path = '';
         let method = 'POST';

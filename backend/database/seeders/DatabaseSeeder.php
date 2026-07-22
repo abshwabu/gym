@@ -71,6 +71,13 @@ class DatabaseSeeder extends Seeder
             ['key' => 'finance.payments.record', 'label' => 'Record Payments', 'category' => 'Finance'],
             ['key' => 'finance.expenses.manage', 'label' => 'Manage Expenses', 'category' => 'Finance'],
             ['key' => 'finance.reports.view', 'label' => 'View Finance Reports', 'category' => 'Finance'],
+
+            // HR
+            ['key' => 'hr.staff.manage', 'label' => 'Manage HR Staff Profiles', 'category' => 'HR'],
+            ['key' => 'hr.attendance.view', 'label' => 'View Staff Attendance', 'category' => 'HR'],
+            ['key' => 'hr.shifts.manage', 'label' => 'Manage Staff Shifts', 'category' => 'HR'],
+            ['key' => 'hr.leave.approve', 'label' => 'Approve Leave Requests', 'category' => 'HR'],
+            ['key' => 'hr.payroll.manage', 'label' => 'Manage Payroll Runs', 'category' => 'HR'],
         ];
 
         foreach ($privileges as $priv) {

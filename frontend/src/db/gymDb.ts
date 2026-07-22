@@ -2,7 +2,7 @@ import Dexie, { type Table } from 'dexie';
 
 export interface OutboxItem {
   localId?: number; // Auto-incrementing local ID
-  entity: 'members' | 'plans' | 'member_plans' | 'attendances' | 'invoices' | 'payments' | 'expenses';
+  entity: 'members' | 'plans' | 'member_plans' | 'attendances' | 'invoices' | 'payments' | 'expenses' | 'staff_attendance';
   method: 'create' | 'update' | 'delete';
   payload: any;
   clientUuid: string;
@@ -108,6 +108,17 @@ export interface CacheExpense {
   updated_at?: string;
 }
 
+export interface CacheStaffAttendance {
+  id: string; // UUID primary key
+  tenant_id: string;
+  employee_id: string;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  method: 'manual' | 'kiosk';
+  created_at?: string;
+  updated_at?: string;
+}
+
 class GymDatabase extends Dexie {
   outbox!: Table<OutboxItem, number>;
   cache_members!: Table<CacheMember, string>;
@@ -117,11 +128,12 @@ class GymDatabase extends Dexie {
   cache_invoices!: Table<CacheInvoice, string>;
   cache_payments!: Table<CachePayment, string>;
   cache_expenses!: Table<CacheExpense, string>;
+  cache_staff_attendance!: Table<CacheStaffAttendance, string>;
 
   constructor() {
     super('GymDatabase');
-    // Bump database version to 3 to include new cache_invoices, cache_payments, cache_expenses tables
-    this.version(3).stores({
+    // Bump database version to 4 to include cache_staff_attendance table
+    this.version(4).stores({
       outbox: '++localId, entity, clientUuid, status',
       cache_members: 'id, status',
       cache_plans: 'id, is_active',
@@ -130,6 +142,7 @@ class GymDatabase extends Dexie {
       cache_invoices: 'id, member_id, member_plan_id, status',
       cache_payments: 'id, invoice_id, member_id, paid_at',
       cache_expenses: 'id, category, incurred_at',
+      cache_staff_attendance: 'id, employee_id, clock_in_at',
     });
   }
 }
