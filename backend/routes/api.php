@@ -50,8 +50,10 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::delete('/plans/{id}', [PlanController::class, 'destroy'])->middleware('privilege:plans.delete');
 
     // Attendance
-    Route::get('/attendance', [AttendanceController::class, 'index'])->middleware('privilege:attendance.view');
-    Route::post('/attendance', [AttendanceController::class, 'store'])->middleware('privilege:attendance.mark');
+    Route::get('/attendances', [AttendanceController::class, 'index'])->middleware('privilege:attendance.view');
+    Route::post('/attendances', [AttendanceController::class, 'store'])->middleware('privilege:attendance.mark');
+    Route::post('/attendances/bulk', [AttendanceController::class, 'bulk'])->middleware('privilege:attendance.mark');
+    Route::get('/members/{member}/attendance-summary', [AttendanceController::class, 'summary'])->middleware('privilege:attendance.view');
 
     // Offline Batch Sync
     Route::post('/sync', [SyncController::class, 'sync']);

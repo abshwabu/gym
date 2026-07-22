@@ -452,6 +452,176 @@ class GymSaaSTest extends TestCase
 
         TenantContext::clear();
     }
+
+    /**
+     * Module 04: Test Attendance Idempotency on create
+     */
+    public function test_attendance_idempotent_duplicate_submission(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Idempotent',
+            'last_name' => 'Test',
+            'status' => 'Active',
+        ]);
+
+        $attendanceId = crypto_random_uuid_placeholder();
+
+        // First check-in
+        $response = $this->postJson('/api/attendances', [
+            'id' => $attendanceId,
+            'member_id' => $member->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+            'method' => 'qr_scan',
+        ]);
+
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('attendances', ['id' => $attendanceId]);
+
+        // Duplicate check-in with same ID (should return 200 and return existing record instead of erroring)
+        $response = $this->postJson('/api/attendances', [
+            'id' => $attendanceId,
+            'member_id' => $member->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+            'method' => 'qr_scan',
+        ]);
+
+        $response->assertStatus(200);
+
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 04: Test Session Limit increment and warning flagging (over_limit)
+     */
+    public function test_attendance_session_limit_warnings(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'LimitFlag',
+            'last_name' => 'Test',
+            'status' => 'Active',
+        ]);
+
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => '1 Session Card',
+            'billing_cycle' => 'one_time',
+            'price' => 15.00,
+            'session_limit' => 1,
+        ]);
+
+        $memberPlan = MemberPlan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'plan_id' => $plan->id,
+            'starts_at' => Carbon::now(),
+            'expires_at' => Carbon::now()->addMonth(),
+            'status' => 'active',
+            'sessions_used' => 0,
+        ]);
+
+        // First check-in: within limit
+        $response = $this->postJson('/api/attendances', [
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'member_plan_id' => $memberPlan->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+        ]);
+        $response->assertStatus(201);
+        $response->assertJson(['over_limit' => false]);
+        $this->assertEquals(1, $memberPlan->fresh()->sessions_used);
+        $this->assertEquals('expired', $memberPlan->fresh()->status); // Plan expired after 1 limit hit
+
+        // Second check-in: advisory check fails but passes with warning since plan status is expired
+        // Let's first test that online checkin fails with 422 because plan is expired:
+        $response = $this->postJson('/api/attendances', [
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'member_plan_id' => $memberPlan->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+        ]);
+        $response->assertStatus(422);
+
+        // Third check-in: offline queue checkin bypasses block but flags over_limit and flagged_for_review
+        $response = $this->postJson('/api/attendances', [
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'member_plan_id' => $memberPlan->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+            'from_offline' => true,
+        ]);
+        $response->assertStatus(201);
+        $response->assertJson([
+            'over_limit' => true,
+            'flagged_for_review' => true,
+        ]);
+
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 04: Test bulk sync with mixed batch of new and duplicate check-ins
+     */
+    public function test_attendance_bulk_sync_mixed_batch(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Bulk',
+            'last_name' => 'Sync',
+            'status' => 'Active',
+        ]);
+
+        $attendanceExisting = Attendance::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'checked_in_at' => Carbon::now(),
+        ]);
+
+        $newAttendanceId = crypto_random_uuid_placeholder();
+
+        $response = $this->postJson('/api/attendances/bulk', [
+            'attendances' => [
+                [
+                    'id' => $attendanceExisting->id,
+                    'member_id' => $member->id,
+                    'checked_in_at' => Carbon::now()->toIso8601String(),
+                ],
+                [
+                    'id' => $newAttendanceId,
+                    'member_id' => $member->id,
+                    'checked_in_at' => Carbon::now()->toIso8601String(),
+                ]
+            ]
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'results' => [
+                [
+                    'id' => $attendanceExisting->id,
+                    'status' => 'duplicate',
+                ],
+                [
+                    'id' => $newAttendanceId,
+                    'status' => 'created',
+                ]
+            ]
+        ]);
+
+        $this->assertDatabaseHas('attendances', ['id' => $newAttendanceId]);
+
+        TenantContext::clear();
+    }
 }
 
 // Simple helper to generate random UUID for tests

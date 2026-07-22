@@ -64,16 +64,22 @@ return new class extends Migration
             $table->foreign('plan_id')->references('id')->on('plans')->onDelete('cascade');
         });
 
-        // 4. Create attendance logs table
-        Schema::create('attendance', function (Blueprint $table) {
+        // 4. Create attendances logs table
+        Schema::create('attendances', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('tenant_id')->index();
             $table->uuid('member_id')->index();
+            $table->uuid('member_plan_id')->nullable()->index();
             $table->timestamp('checked_in_at');
+            $table->uuid('checked_in_by')->nullable()->index();
+            $table->enum('method', ['manual', 'qr_scan', 'kiosk'])->default('manual');
+            $table->timestamp('synced_at')->nullable();
             $table->timestamps();
 
             $table->foreign('tenant_id')->references('id')->on('tenants')->onDelete('cascade');
             $table->foreign('member_id')->references('id')->on('members')->onDelete('cascade');
+            $table->foreign('member_plan_id')->references('id')->on('member_plans')->onDelete('set null');
+            $table->foreign('checked_in_by')->references('id')->on('users')->onDelete('set null');
         });
 
         // 5. Create sync conflict logs table
@@ -97,7 +103,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('sync_conflict_logs');
-        Schema::dropIfExists('attendance');
+        Schema::dropIfExists('attendances');
         Schema::dropIfExists('member_plans');
         Schema::dropIfExists('members');
         Schema::dropIfExists('plans');

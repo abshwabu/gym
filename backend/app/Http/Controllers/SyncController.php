@@ -21,7 +21,7 @@ class SyncController extends Controller
             'queue' => 'required|array',
             'queue.*.id' => 'required', // Client's queue ID (often numeric or uuid)
             'queue.*.uuid' => 'required|uuid',
-            'queue.*.table' => 'required|string|in:members,plans,attendance',
+            'queue.*.table' => 'required|string|in:members,plans,attendances',
             'queue.*.action' => 'required|string|in:create,update,delete',
             'queue.*.payload' => 'required|array',
             'queue.*.timestamp' => 'required|date',
@@ -91,7 +91,7 @@ class SyncController extends Controller
                     } else {
                         Member::create($payload);
                     }
-                } elseif ($table === 'attendance') {
+                } elseif ($table === 'attendances') {
                     $attendance = Attendance::find($uuid);
 
                     if (!$attendance) {
