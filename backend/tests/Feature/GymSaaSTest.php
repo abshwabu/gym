@@ -4,7 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\Attendance;
 use App\Models\Member;
-use App\Models\MembershipPlan;
+use App\Models\Plan;
+use App\Models\MemberPlan;
 use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\User;
@@ -129,8 +130,8 @@ class GymSaaSTest extends TestCase
                          ->postJson('/api/plans', [
                              'id' => crypto_random_uuid_placeholder(),
                              'name' => 'Unauthorized Plan',
+                             'billing_cycle' => 'monthly',
                              'price' => 10.00,
-                             'duration_days' => 30,
                          ]);
 
         $response->assertStatus(403);
@@ -140,8 +141,8 @@ class GymSaaSTest extends TestCase
                          ->postJson('/api/plans', [
                              'id' => crypto_random_uuid_placeholder(),
                              'name' => 'Standard Monthly',
+                             'billing_cycle' => 'monthly',
                              'price' => 29.99,
-                             'duration_days' => 30,
                              'is_active' => true,
                          ]);
 
@@ -214,7 +215,6 @@ class GymSaaSTest extends TestCase
         $response->assertStatus(403); // Forbidden due to invalid signed url
 
         // 3. Activate the account WITH the valid signed activation link
-        // Extract the query parameters from the generated signed url
         $queryParams = parse_url($activationUrl, PHP_URL_QUERY);
         $activationPath = '/api/staff/activate/' . $userId . '?' . $queryParams;
 
@@ -238,6 +238,219 @@ class GymSaaSTest extends TestCase
 
         $response->assertStatus(400) // Bad request because status is no longer 'invited'
                  ->assertJson(['message' => 'This activation link is invalid or has already been used.']);
+    }
+
+    /**
+     * Module 03: Test Flexible Plan CRUD & Custom Cycle Validation Rules
+     */
+    public function test_flexible_plans_crud_and_validations(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        // 1. Validation failure: billing_cycle is custom_days but custom_cycle_days is null
+        $response = $this->postJson('/api/plans', [
+            'name' => 'Custom Days Plan Fail',
+            'billing_cycle' => 'custom_days',
+            'custom_cycle_days' => null,
+            'price' => 50.00,
+        ]);
+        $response->assertStatus(422);
+
+        // 2. Validation failure: billing_cycle is monthly but custom_cycle_days is provided
+        $response = $this->postJson('/api/plans', [
+            'name' => 'Monthly Plan Fail',
+            'billing_cycle' => 'monthly',
+            'custom_cycle_days' => 15,
+            'price' => 50.00,
+        ]);
+        $response->assertStatus(422);
+
+        // 3. Create Valid custom_days plan
+        $planId = crypto_random_uuid_placeholder();
+        $response = $this->postJson('/api/plans', [
+            'id' => $planId,
+            'name' => 'Bi-Weekly Premium',
+            'billing_cycle' => 'custom_days',
+            'custom_cycle_days' => 14,
+            'price' => 25.00,
+        ]);
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('plans', ['id' => $planId, 'custom_cycle_days' => 14]);
+
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 03: Test Subscription Assignment & Automatic Expiry Computation & Override
+     */
+    public function test_plan_assignment_expiry_computations(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Alex',
+            'last_name' => 'PlanTest',
+            'status' => 'Active',
+        ]);
+
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => '3 Months Plan',
+            'billing_cycle' => 'quarterly',
+            'price' => 120.00,
+        ]);
+
+        // 1. Assign plan with automatic expiry calculation
+        $startsAt = Carbon::now();
+        $response = $this->postJson("/api/members/{$member->id}/plans", [
+            'plan_id' => $plan->id,
+            'starts_at' => $startsAt->toIso8601String(),
+        ]);
+
+        $response->assertStatus(201);
+        $memberPlanId = $response->json('id');
+
+        $memberPlan = MemberPlan::find($memberPlanId);
+        $expectedExpiry = $startsAt->copy()->addMonths(3);
+        $this->assertEquals($expectedExpiry->toDateString(), $memberPlan->expires_at->toDateString());
+
+        // 2. Assign plan with manual expiry override (promo)
+        $overrideExpiry = Carbon::now()->addDays(120);
+        $response = $this->postJson("/api/members/{$member->id}/plans", [
+            'plan_id' => $plan->id,
+            'starts_at' => $startsAt->toIso8601String(),
+            'expires_at' => $overrideExpiry->toIso8601String(),
+        ]);
+
+        $response->assertStatus(201);
+        $overridePlanId = $response->json('id');
+        $overridePlan = MemberPlan::find($overridePlanId);
+        $this->assertEquals($overrideExpiry->toDateString(), $overridePlan->expires_at->toDateString());
+
+        // 3. Test delete blocking when active subscriptions exist
+        $response = $this->deleteJson("/api/plans/{$plan->id}");
+        $response->assertStatus(400); // Blocked
+
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 03: Test Subscription Freeze, Unfreeze, and Expiry Extension capping
+     */
+    public function test_plan_freeze_and_unfreeze_capping(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Freezer',
+            'last_name' => 'Test',
+            'status' => 'Active',
+        ]);
+
+        // Plan with 10 days freeze allowance
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => 'Freeze Restricted Plan',
+            'billing_cycle' => 'monthly',
+            'price' => 50.00,
+            'freeze_allowance_days' => 10,
+        ]);
+
+        $startsAt = Carbon::now();
+        $expiresAt = $startsAt->copy()->addMonth();
+
+        $memberPlan = MemberPlan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'plan_id' => $plan->id,
+            'starts_at' => $startsAt,
+            'expires_at' => $expiresAt,
+            'status' => 'active',
+        ]);
+
+        // 1. Freeze the plan
+        $response = $this->postJson("/api/member-plans/{$memberPlan->id}/freeze");
+        $response->assertStatus(200);
+
+        $memberPlan = $memberPlan->fresh();
+        $this->assertEquals('frozen', $memberPlan->status);
+        $this->assertNotNull($memberPlan->frozen_at);
+
+        // 2. Manipulate DB to simulate that 12 days have passed since the freeze occurred
+        // (exceeding the 10 days allowance cap)
+        $memberPlan->update(['frozen_at' => Carbon::now()->subDays(12)]);
+
+        // 3. Unfreeze the plan
+        $response = $this->postJson("/api/member-plans/{$memberPlan->id}/unfreeze");
+        $response->assertStatus(200);
+
+        $memberPlan = $memberPlan->fresh();
+        $this->assertEquals('active', $memberPlan->status);
+        $this->assertNull($memberPlan->frozen_at);
+
+        // Expect expires_at to be extended by exactly 10 days (cap) instead of 12 days
+        $expectedNewExpiresAt = $expiresAt->copy()->addDays(10);
+        $this->assertEquals($expectedNewExpiresAt->toDateString(), $memberPlan->expires_at->toDateString());
+        $this->assertEquals(10, $memberPlan->total_frozen_days);
+
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 03: Test standalone incrementSession() method and session limits expiring status
+     */
+    public function test_session_limit_increment_and_expiry(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Sessions',
+            'last_name' => 'Limits',
+            'status' => 'Active',
+        ]);
+
+        // Plan with 3 sessions limit
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => '3 Session Punch Card',
+            'billing_cycle' => 'one_time',
+            'price' => 30.00,
+            'session_limit' => 3,
+        ]);
+
+        $memberPlan = MemberPlan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'plan_id' => $plan->id,
+            'starts_at' => Carbon::now(),
+            'expires_at' => Carbon::now()->addYear(),
+            'status' => 'active',
+            'sessions_used' => 0,
+        ]);
+
+        // Increment 1st session
+        $memberPlan->incrementSession();
+        $this->assertEquals(1, $memberPlan->fresh()->sessions_used);
+        $this->assertEquals('active', $memberPlan->fresh()->status);
+
+        // Increment 2nd session
+        $memberPlan->incrementSession();
+        $this->assertEquals(2, $memberPlan->fresh()->sessions_used);
+        $this->assertEquals('active', $memberPlan->fresh()->status);
+
+        // Increment 3rd session (limit reached)
+        $memberPlan->incrementSession();
+        $this->assertEquals(3, $memberPlan->fresh()->sessions_used);
+        $this->assertEquals('expired', $memberPlan->fresh()->status); // Changes to expired!
+
+        TenantContext::clear();
     }
 }
 

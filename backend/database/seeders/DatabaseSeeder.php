@@ -4,7 +4,8 @@ namespace Database\Seeders;
 
 use App\Models\Attendance;
 use App\Models\Member;
-use App\Models\MembershipPlan;
+use App\Models\Plan;
+use App\Models\MemberPlan;
 use App\Models\Privilege;
 use App\Models\Role;
 use App\Models\Tenant;
@@ -117,22 +118,26 @@ class DatabaseSeeder extends Seeder
         $staffUser->roles()->sync([$frontDeskRole->id]);
 
         // 5. Seed Membership Plans
-        $monthlyPlan = MembershipPlan::updateOrCreate(
+        $monthlyPlan = Plan::updateOrCreate(
             ['tenant_id' => $tenant->id, 'name' => 'Monthly Premium'],
             [
                 'id' => 'b11b5103-6251-4e78-95ea-c4e9cb5e4d01',
+                'billing_cycle' => 'monthly',
                 'price' => 49.99,
-                'duration_days' => 30,
+                'currency' => 'USD',
+                'freeze_allowance_days' => 15,
                 'is_active' => true,
             ]
         );
 
-        $annualPlan = MembershipPlan::updateOrCreate(
+        $annualPlan = Plan::updateOrCreate(
             ['tenant_id' => $tenant->id, 'name' => 'Annual Elite'],
             [
                 'id' => 'b11b5103-6251-4e78-95ea-c4e9cb5e4d02',
+                'billing_cycle' => 'annual',
                 'price' => 479.99,
-                'duration_days' => 365,
+                'currency' => 'USD',
+                'freeze_allowance_days' => 45,
                 'is_active' => true,
             ]
         );
@@ -145,8 +150,6 @@ class DatabaseSeeder extends Seeder
                 'email' => 'john.doe@gmail.com',
                 'phone' => '555-0199',
                 'status' => 'Active',
-                'membership_plan_id' => $monthlyPlan->id,
-                'plan_expires_at' => Carbon::now()->addDays(25),
             ]
         );
 
@@ -157,8 +160,34 @@ class DatabaseSeeder extends Seeder
                 'email' => 'jane.smith@gmail.com',
                 'phone' => '555-0120',
                 'status' => 'Active',
-                'membership_plan_id' => $annualPlan->id,
-                'plan_expires_at' => Carbon::now()->addDays(200),
+            ]
+        );
+
+        // Seed Member Plan Subscriptions
+        $startsAt = Carbon::now()->subDays(5);
+        $sub1 = MemberPlan::updateOrCreate(
+            ['id' => 'e11e5103-6251-4e78-95ea-c4e9cb5e4d01'],
+            [
+                'tenant_id' => $tenant->id,
+                'member_id' => $member1->id,
+                'plan_id' => $monthlyPlan->id,
+                'starts_at' => $startsAt,
+                'expires_at' => $startsAt->copy()->addMonth(),
+                'status' => 'active',
+                'sessions_used' => 2,
+            ]
+        );
+
+        $sub2 = MemberPlan::updateOrCreate(
+            ['id' => 'e11e5103-6251-4e78-95ea-c4e9cb5e4d02'],
+            [
+                'tenant_id' => $tenant->id,
+                'member_id' => $member2->id,
+                'plan_id' => $annualPlan->id,
+                'starts_at' => $startsAt,
+                'expires_at' => $startsAt->copy()->addYear(),
+                'status' => 'active',
+                'sessions_used' => 0,
             ]
         );
 

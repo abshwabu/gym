@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Attendance;
 use App\Models\Member;
-use App\Models\MembershipPlan;
+use App\Models\Plan;
 use App\Models\SyncConflictLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -19,9 +19,9 @@ class SyncController extends Controller
     {
         $request->validate([
             'queue' => 'required|array',
-            'queue.*.id' => 'required', // Client's queue queue ID (often numeric or uuid)
+            'queue.*.id' => 'required', // Client's queue ID (often numeric or uuid)
             'queue.*.uuid' => 'required|uuid',
-            'queue.*.table' => 'required|string|in:members,membership_plans,attendance',
+            'queue.*.table' => 'required|string|in:members,plans,attendance',
             'queue.*.action' => 'required|string|in:create,update,delete',
             'queue.*.payload' => 'required|array',
             'queue.*.timestamp' => 'required|date',
@@ -43,8 +43,8 @@ class SyncController extends Controller
                 // Force the record primary ID to match the client-generated UUID
                 $payload['id'] = $uuid;
 
-                if ($table === 'membership_plans') {
-                    $plan = MembershipPlan::find($uuid);
+                if ($table === 'plans') {
+                    $plan = Plan::find($uuid);
 
                     if ($plan) {
                         $serverUpdatedAt = $plan->updated_at;
@@ -52,7 +52,7 @@ class SyncController extends Controller
                         if ($clientTimestamp->lt($serverUpdatedAt)) {
                             // Client change is older. Log conflict, skip update, keep server version.
                             SyncConflictLog::create([
-                                'table_name' => 'membership_plans',
+                                'table_name' => 'plans',
                                 'record_id' => $uuid,
                                 'client_payload' => $payload,
                                 'server_payload' => $plan->toArray(),
@@ -65,7 +65,7 @@ class SyncController extends Controller
 
                         $plan->update($payload);
                     } else {
-                        MembershipPlan::create($payload);
+                        Plan::create($payload);
                     }
                 } elseif ($table === 'members') {
                     $member = Member::find($uuid);

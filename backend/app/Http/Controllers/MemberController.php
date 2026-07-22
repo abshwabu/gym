@@ -14,7 +14,7 @@ class MemberController extends Controller
      */
     public function index()
     {
-        $members = Member::with('plan')->orderBy('first_name')->orderBy('last_name')->get();
+        $members = Member::with('activeMemberPlan.plan')->orderBy('first_name')->orderBy('last_name')->get();
         return response()->json($members);
     }
 
@@ -30,8 +30,6 @@ class MemberController extends Controller
             'email' => 'nullable|email|max:255',
             'phone' => 'nullable|string|max:50',
             'status' => 'required|string|max:50', // Active, Inactive, Frozen
-            'membership_plan_id' => 'nullable|uuid|exists:membership_plans,id',
-            'plan_expires_at' => 'nullable|date',
             'updated_at' => 'nullable|date',
         ]);
 
@@ -53,7 +51,7 @@ class MemberController extends Controller
                     'resolved' => false,
                 ]);
 
-                return response()->json($member->load('plan'), 200); // Return server version
+                return response()->json($member->load('activeMemberPlan.plan'), 200); // Return server version
             }
 
             // Overwrite database record with newer client payload
@@ -63,8 +61,6 @@ class MemberController extends Controller
                 'email' => $request->input('email'),
                 'phone' => $request->input('phone'),
                 'status' => $request->input('status'),
-                'membership_plan_id' => $request->input('membership_plan_id'),
-                'plan_expires_at' => $request->input('plan_expires_at'),
             ]);
         } else {
             // Create a new member record with the client's UUID
@@ -75,11 +71,9 @@ class MemberController extends Controller
                 'email' => $request->input('email'),
                 'phone' => $request->input('phone'),
                 'status' => $request->input('status', 'Active'),
-                'membership_plan_id' => $request->input('membership_plan_id'),
-                'plan_expires_at' => $request->input('plan_expires_at'),
             ]);
         }
 
-        return response()->json($member->load('plan'), 201);
+        return response()->json($member->load('activeMemberPlan.plan'), 201);
     }
 }

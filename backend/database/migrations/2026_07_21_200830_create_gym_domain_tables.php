@@ -11,18 +11,26 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('membership_plans', function (Blueprint $table) {
+        // 1. Create flexible plans table
+        Schema::create('plans', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('tenant_id')->index();
-            $table->string('name', 255);
+            $table->string('name');
+            $table->enum('billing_cycle', ['one_time', 'weekly', 'monthly', 'quarterly', 'annual', 'custom_days']);
+            $table->integer('custom_cycle_days')->nullable();
             $table->decimal('price', 10, 2);
-            $table->integer('duration_days');
+            $table->string('currency', 3)->default('USD');
+            $table->integer('session_limit')->nullable();
+            $table->json('access_hours')->nullable();
+            $table->integer('freeze_allowance_days')->default(0);
             $table->boolean('is_active')->default(true);
+            $table->softDeletes();
             $table->timestamps();
 
             $table->foreign('tenant_id')->references('id')->on('tenants')->onDelete('cascade');
         });
 
+        // 2. Create members table
         Schema::create('members', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('tenant_id')->index();
@@ -31,14 +39,32 @@ return new class extends Migration
             $table->string('email', 255)->nullable();
             $table->string('phone', 50)->nullable();
             $table->string('status', 50)->default('Active'); // Active, Inactive, Frozen
-            $table->uuid('membership_plan_id')->nullable()->index();
-            $table->timestamp('plan_expires_at')->nullable();
             $table->timestamps();
 
             $table->foreign('tenant_id')->references('id')->on('tenants')->onDelete('cascade');
-            $table->foreign('membership_plan_id')->references('id')->on('membership_plans')->onDelete('set null');
         });
 
+        // 3. Create member_plans subscriptions table
+        Schema::create('member_plans', function (Blueprint $table) {
+            $table->uuid('id')->primary();
+            $table->uuid('tenant_id')->index();
+            $table->uuid('member_id')->index();
+            $table->uuid('plan_id')->index();
+            $table->timestamp('starts_at');
+            $table->timestamp('expires_at');
+            $table->enum('status', ['active', 'frozen', 'expired', 'cancelled'])->default('active');
+            $table->integer('sessions_used')->default(0);
+            $table->timestamp('frozen_at')->nullable();
+            $table->integer('total_frozen_days')->default(0);
+            $table->uuid('client_uuid')->nullable()->unique();
+            $table->timestamps();
+
+            $table->foreign('tenant_id')->references('id')->on('tenants')->onDelete('cascade');
+            $table->foreign('member_id')->references('id')->on('members')->onDelete('cascade');
+            $table->foreign('plan_id')->references('id')->on('plans')->onDelete('cascade');
+        });
+
+        // 4. Create attendance logs table
         Schema::create('attendance', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('tenant_id')->index();
@@ -50,6 +76,7 @@ return new class extends Migration
             $table->foreign('member_id')->references('id')->on('members')->onDelete('cascade');
         });
 
+        // 5. Create sync conflict logs table
         Schema::create('sync_conflict_logs', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('tenant_id')->index();
@@ -71,7 +98,8 @@ return new class extends Migration
     {
         Schema::dropIfExists('sync_conflict_logs');
         Schema::dropIfExists('attendance');
+        Schema::dropIfExists('member_plans');
         Schema::dropIfExists('members');
-        Schema::dropIfExists('membership_plans');
+        Schema::dropIfExists('plans');
     }
 };

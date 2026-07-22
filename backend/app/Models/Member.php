@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Member extends Model
 {
@@ -21,20 +22,22 @@ class Member extends Model
         'email',
         'phone',
         'status',
-        'membership_plan_id',
-        'plan_expires_at',
-    ];
-
-    protected $casts = [
-        'plan_expires_at' => 'datetime',
     ];
 
     /**
-     * Get the membership plan of this member.
+     * Get all membership plan subscriptions for this member.
      */
-    public function plan(): BelongsTo
+    public function memberPlans(): HasMany
     {
-        return $this->belongsTo(MembershipPlan::class, 'membership_plan_id');
+        return $this->hasMany(MemberPlan::class, 'member_id');
+    }
+
+    /**
+     * Get the current active plan subscription for this member.
+     */
+    public function activeMemberPlan(): HasOne
+    {
+        return $this->hasOne(MemberPlan::class, 'member_id')->where('status', 'active');
     }
 
     /**

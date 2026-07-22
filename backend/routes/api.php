@@ -5,7 +5,8 @@ use Illuminate\Support\Facades\Route;
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\MemberController;
-use App\Http\Controllers\MembershipPlanController;
+use App\Http\Controllers\PlanController;
+use App\Http\Controllers\MemberPlanController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\InvitationController;
@@ -36,9 +37,17 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/members', [MemberController::class, 'index'])->middleware('privilege:members.view');
     Route::post('/members', [MemberController::class, 'store'])->middleware('privilege:members.create');
 
-    // Plans
-    Route::get('/plans', [MembershipPlanController::class, 'index'])->middleware('privilege:plans.view');
-    Route::post('/plans', [MembershipPlanController::class, 'store'])->middleware('privilege:plans.create');
+    // Member Plans (Subscriptions)
+    Route::get('/members/{member}/plans', [MemberPlanController::class, 'index'])->middleware('privilege:members.view');
+    Route::post('/members/{member}/plans', [MemberPlanController::class, 'store'])->middleware('privilege:members.update');
+    Route::post('/member-plans/{id}/freeze', [MemberPlanController::class, 'freeze'])->middleware('privilege:members.update');
+    Route::post('/member-plans/{id}/unfreeze', [MemberPlanController::class, 'unfreeze'])->middleware('privilege:members.update');
+
+    // Plans CRUD
+    Route::get('/plans', [PlanController::class, 'index'])->middleware('privilege:plans.view');
+    Route::post('/plans', [PlanController::class, 'store'])->middleware('privilege:plans.create');
+    Route::patch('/plans/{id}', [PlanController::class, 'update'])->middleware('privilege:plans.update');
+    Route::delete('/plans/{id}', [PlanController::class, 'destroy'])->middleware('privilege:plans.delete');
 
     // Attendance
     Route::get('/attendance', [AttendanceController::class, 'index'])->middleware('privilege:attendance.view');
