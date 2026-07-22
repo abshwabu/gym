@@ -1820,6 +1820,14 @@ export default function App() {
                                           }} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '13px', borderRadius: '8px' }}>
                                             Profile
                                           </button>
+                                          {hasPrivilege('attendance.mark') && member.status === 'Active' && (
+                                            <button onClick={() => {
+                                              handleCheckin(member.id);
+                                              showToast(`Checked in: ${member.first_name} ${member.last_name}`, 'success');
+                                            }} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '13px', borderRadius: '8px' }}>
+                                              Check In
+                                            </button>
+                                          )}
                                           {hasPrivilege('members.create') && (
                                             <button onClick={() => {
                                               setEditingMember(member);
@@ -1905,6 +1913,44 @@ export default function App() {
                     <Route path="/attendance" element={
                       hasPrivilege('attendance.view') ? (
                         <div>
+                          {hasPrivilege('attendance.mark') && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', gap: '20px' }}>
+                              <div style={{ position: 'relative', width: '350px' }}>
+                                <Search size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-muted)' }} />
+                                <input
+                                  type="text"
+                                  className="form-input"
+                                  placeholder="Quick check-in (name/phone/scan)..."
+                                  style={{ paddingLeft: '38px', height: '40px' }}
+                                  value={checkinSearch}
+                                  onChange={e => setCheckinSearch(e.target.value)}
+                                />
+                                {filteredCheckinMembers.length > 0 && (
+                                  <div style={{ position: 'absolute', top: '44px', left: 0, right: 0, backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', zIndex: 10, boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
+                                    {filteredCheckinMembers.map((member: any) => (
+                                      <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid var(--border-color)' }}>
+                                        <div>
+                                          <div style={{ fontWeight: '600', fontSize: '13px' }}>{member.first_name} {member.last_name}</div>
+                                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{member.phone || 'No Phone'}</div>
+                                        </div>
+                                        <button onClick={() => {
+                                          handleCheckin(member.id);
+                                          setCheckinSearch('');
+                                          showToast(`Checked in: ${member.first_name} ${member.last_name}`, 'success');
+                                        }} className="btn btn-primary" style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px' }}>
+                                          Check In
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
+                                Today's Total Check-ins: <strong>{attendances.filter((a: any) => new Date(a.checked_in_at).toDateString() === new Date().toDateString()).length}</strong>
+                              </div>
+                            </div>
+                          )}
+
                           <div className="table-container">
                             <table className="custom-table">
                               <thead>
