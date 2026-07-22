@@ -100,12 +100,12 @@ export default function App() {
 
     // Subscribe to write queue size changes
     const unsubscribe = SyncManager.subscribeQueueChange(async () => {
-      const q = await db.writeQueue.count();
+      const q = await db.outbox.count();
       setQueueLength(q);
     });
 
     // Initial queue count
-    db.writeQueue.count().then(setQueueLength);
+    db.outbox.count().then(setQueueLength);
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -116,12 +116,12 @@ export default function App() {
   }, [token]);
 
   // Live Queries using Dexie React hooks
-  const members = useLiveQuery(() => db.members.toArray()) || [];
-  const plans = useLiveQuery(() => db.membershipPlans.toArray()) || [];
-  const attendances = useLiveQuery(async () => {
-    const list = await db.attendance.toArray();
+  const members: any[] = useLiveQuery(() => db.cache_members.toArray()) || [];
+  const plans: any[] = useLiveQuery(() => db.cache_plans.toArray()) || [];
+  const attendances: any[] = useLiveQuery(async () => {
+    const list = await db.cache_attendances.toArray();
     // Sort descending by checked_in_at
-    return list.sort((a, b) => new Date(b.checked_in_at).getTime() - new Date(a.checked_in_at).getTime());
+    return list.sort((a: any, b: any) => new Date(b.checked_in_at).getTime() - new Date(a.checked_in_at).getTime());
   }) || [];
 
   // Helper check for privilege permissions
@@ -210,7 +210,7 @@ export default function App() {
 
   // Perform Member Check-in
   const handleCheckin = async (memberId: string) => {
-    const member = members.find(m => m.id === memberId);
+    const member = members.find((m: any) => m.id === memberId);
     if (!member) return;
 
     if (member.status !== 'Active') {
@@ -234,7 +234,7 @@ export default function App() {
     };
 
     try {
-      await SyncManager.queueWrite('attendance', 'create', attendanceId, payload);
+      await SyncManager.queueWrite('attendances', 'create', attendanceId, payload);
       showToast(`Successfully checked in ${member.first_name} ${member.last_name}!`);
       setCheckinSearch('');
     } catch (e) {
@@ -247,7 +247,7 @@ export default function App() {
   const handleMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const selectedPlan = plans.find(p => p.id === memberForm.membership_plan_id);
+    const selectedPlan = plans.find((p: any) => p.id === memberForm.membership_plan_id);
     let plan_expires_at: string | null = null;
 
     if (selectedPlan && memberForm.status === 'Active') {
@@ -302,7 +302,7 @@ export default function App() {
     };
 
     try {
-      await SyncManager.queueWrite('membership_plans', 'create', planId, payload);
+      await SyncManager.queueWrite('plans', 'create', planId, payload);
       showToast(`Membership plan "${planForm.name}" created.`);
       setShowPlanModal(false);
       setPlanForm({
@@ -368,13 +368,13 @@ export default function App() {
   // Active check-in search filters
   const filteredCheckinMembers = checkinSearch.trim() === ''
     ? []
-    : members.filter(m => {
+    : members.filter((m: any) => {
         const full = `${m.first_name} ${m.last_name}`.toLowerCase();
         return full.includes(checkinSearch.toLowerCase()) || (m.phone && m.phone.includes(checkinSearch));
       }).slice(0, 5);
 
   // Member search filters
-  const filteredMembers = members.filter(m => {
+  const filteredMembers = members.filter((m: any) => {
     const full = `${m.first_name} ${m.last_name}`.toLowerCase();
     const matchText = full.includes(memberSearch.toLowerCase()) || (m.phone && m.phone.includes(memberSearch)) || (m.email && m.email.toLowerCase().includes(memberSearch.toLowerCase()));
     return matchText;
@@ -475,7 +475,7 @@ export default function App() {
                 </div>
                 <div className="stat-info">
                   <div className="stat-label">Active Members</div>
-                  <div className="stat-value">{members.filter(m => m.status === 'Active').length}</div>
+                  <div className="stat-value">{members.filter((m: any) => m.status === 'Active').length}</div>
                 </div>
               </div>
 
@@ -486,7 +486,7 @@ export default function App() {
                 <div className="stat-info">
                   <div className="stat-label">Today's Check-ins</div>
                   <div className="stat-value">
-                    {attendances.filter(a => {
+                    {attendances.filter((a: any) => {
                       const today = new Date().toDateString();
                       return new Date(a.checked_in_at).toDateString() === today;
                     }).length}
@@ -500,7 +500,7 @@ export default function App() {
                 </div>
                 <div className="stat-info">
                   <div className="stat-label">Available Plans</div>
-                  <div className="stat-value">{plans.filter(p => p.is_active).length}</div>
+                  <div className="stat-value">{plans.filter((p: any) => p.is_active).length}</div>
                 </div>
               </div>
 
@@ -548,8 +548,8 @@ export default function App() {
                       zIndex: 10,
                       boxShadow: '0 10px 25px rgba(0,0,0,0.5)'
                     }}>
-                      {filteredCheckinMembers.map(member => {
-                        const plan = plans.find(p => p.id === member.membership_plan_id);
+                      {filteredCheckinMembers.map((member: any) => {
+                        const plan = plans.find((p: any) => p.id === member.membership_plan_id);
                         const isExpired = member.plan_expires_at ? new Date(member.plan_expires_at) < new Date() : false;
 
                         return (
@@ -643,8 +643,8 @@ export default function App() {
                       </td>
                     </tr>
                   ) : (
-                    filteredMembers.map(member => {
-                      const plan = plans.find(p => p.id === member.membership_plan_id);
+                    filteredMembers.map((member: any) => {
+                      const plan = plans.find((p: any) => p.id === member.membership_plan_id);
                       return (
                         <tr key={member.id}>
                           <td style={{ fontWeight: '600' }}>{member.first_name} {member.last_name}</td>
@@ -719,7 +719,7 @@ export default function App() {
                       </td>
                     </tr>
                   ) : (
-                    plans.map(plan => (
+                    plans.map((plan: any) => (
                       <tr key={plan.id}>
                         <td style={{ fontWeight: '600' }}>{plan.name}</td>
                         <td>${plan.price}</td>
@@ -757,8 +757,8 @@ export default function App() {
                       </td>
                     </tr>
                   ) : (
-                    attendances.map(log => {
-                      const member = members.find(m => m.id === log.member_id);
+                    attendances.map((log: any) => {
+                      const member = members.find((m: any) => m.id === log.member_id);
                       return (
                         <tr key={log.id}>
                           <td style={{ fontWeight: '600' }}>
@@ -852,7 +852,7 @@ export default function App() {
                   onChange={e => setMemberForm({ ...memberForm, membership_plan_id: e.target.value })}
                 >
                   <option value="">No Subscription Plan</option>
-                  {plans.map(p => (
+                  {plans.map((p: any) => (
                     <option key={p.id} value={p.id}>{p.name} - ${p.price}</option>
                   ))}
                 </select>

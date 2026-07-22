@@ -622,6 +622,83 @@ class GymSaaSTest extends TestCase
 
         TenantContext::clear();
     }
+
+    /**
+     * Module 05: Offline Sync End-To-End Integration Test
+     */
+    public function test_offline_sync_architecture_end_to_end(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'OfflineMember',
+            'last_name' => 'SyncE2E',
+            'status' => 'Active',
+        ]);
+
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => 'Synchronized Plan',
+            'billing_cycle' => 'monthly',
+            'price' => 45.00,
+        ]);
+
+        // --- SIMULATE GOING OFFLINE AND RETRYING SYNC ON RECONNECT ---
+
+        // 1. Client creates 3 offline check-in records
+        $c1 = crypto_random_uuid_placeholder();
+        $c2 = crypto_random_uuid_placeholder();
+        $c3 = crypto_random_uuid_placeholder();
+
+        $checkinsPayload = [
+            ['id' => $c1, 'member_id' => $member->id, 'checked_in_at' => Carbon::now()->subMinutes(15)->toIso8601String()],
+            ['id' => $c2, 'member_id' => $member->id, 'checked_in_at' => Carbon::now()->subMinutes(10)->toIso8601String()],
+            ['id' => $c3, 'member_id' => $member->id, 'checked_in_at' => Carbon::now()->subMinutes(5)->toIso8601String()],
+        ];
+
+        // 2. Client makes an offline plan edit
+        $clientEditTimestamp = Carbon::now()->subSeconds(10);
+        $planEditPayload = [
+            'name' => 'Client Offline Plan Name',
+            'updated_at' => $clientEditTimestamp->toIso8601String(),
+        ];
+
+        // --- SIMULATE GOING ONLINE & SYNCING QUEUE ---
+
+        // A. Drain the 3 checkins via bulk endpoint
+        $response = $this->postJson('/api/attendances/bulk', [
+            'attendances' => $checkinsPayload,
+        ]);
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('attendances', ['id' => $c1]);
+        $this->assertDatabaseHas('attendances', ['id' => $c2]);
+        $this->assertDatabaseHas('attendances', ['id' => $c3]);
+
+        // B. Force a concurrent server edit that is NEWER than the client's offline edit
+        $serverEditTimestamp = Carbon::now()->addSeconds(5);
+        $plan->update([
+            'name' => 'Server Newer Plan Name',
+            'updated_at' => $serverEditTimestamp,
+        ]);
+
+        // C. Client pushes their plan edit to PATCH endpoint
+        $response = $this->patchJson("/api/plans/{$plan->id}", $planEditPayload);
+        $response->assertStatus(200);
+
+        // Verify that:
+        // 1. The plan name remains 'Server Newer Plan Name' (LWW preserves newer server name)
+        $this->assertEquals('Server Newer Plan Name', $plan->fresh()->name);
+
+        // 2. A conflict log was successfully stored in sync_conflicts table
+        $this->assertDatabaseHas('sync_conflicts', [
+            'entity_type' => 'plans',
+            'entity_id' => $plan->id,
+        ]);
+
+        TenantContext::clear();
+    }
 }
 
 // Simple helper to generate random UUID for tests

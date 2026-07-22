@@ -88,7 +88,25 @@ class PlanController extends Controller
             'access_hours' => 'nullable|array',
             'freeze_allowance_days' => 'nullable|integer|min:0',
             'is_active' => 'nullable|boolean',
+            'updated_at' => 'nullable|date',
         ]);
+
+        if ($request->filled('updated_at')) {
+            $clientUpdatedAt = \Illuminate\Support\Carbon::parse($request->input('updated_at'));
+            $serverUpdatedAt = $plan->updated_at;
+
+            if ($clientUpdatedAt->lt($serverUpdatedAt)) {
+                // Client change is older. Log conflict, keep server version.
+                \App\Models\SyncConflict::create([
+                    'entity_type' => 'plans',
+                    'entity_id' => $plan->id,
+                    'client_payload' => $request->all(),
+                    'server_payload' => $plan->toArray(),
+                ]);
+
+                return response()->json($plan, 200);
+            }
+        }
 
         $plan->update($request->only([
             'name', 'billing_cycle', 'custom_cycle_days', 'price', 'currency', 'session_limit', 'access_hours', 'freeze_allowance_days', 'is_active'

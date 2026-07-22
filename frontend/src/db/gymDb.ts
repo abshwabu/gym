@@ -1,70 +1,87 @@
 import Dexie, { type Table } from 'dexie';
 
-export interface LocalMember {
-  id: string; // UUID
+export interface OutboxItem {
+  localId?: number; // Auto-incrementing local ID
+  entity: 'members' | 'plans' | 'member_plans' | 'attendances';
+  method: 'create' | 'update' | 'delete';
+  payload: any;
+  clientUuid: string;
+  createdAt: string;
+  status: 'pending' | 'synced' | 'conflict';
+}
+
+export interface CacheMember {
+  id: string; // UUID primary key
   first_name: string;
   last_name: string;
   email: string | null;
   phone: string | null;
   status: string; // Active, Inactive, Frozen
-  membership_plan_id: string | null;
-  plan_expires_at: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
-export interface LocalMembershipPlan {
-  id: string; // UUID
+export interface CachePlan {
+  id: string; // UUID primary key
   name: string;
+  billing_cycle: 'one_time' | 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'custom_days';
+  custom_cycle_days: number | null;
   price: number;
-  duration_days: number;
+  currency: string;
+  session_limit: number | null;
+  access_hours: any | null;
+  freeze_allowance_days: number;
   is_active: boolean;
+  deleted_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
-export interface LocalAttendance {
-  id: string; // UUID
+export interface CacheMemberPlan {
+  id: string; // UUID primary key
+  tenant_id: string;
   member_id: string;
-  checked_in_at: string;
+  plan_id: string;
+  starts_at: string;
+  expires_at: string;
+  status: 'active' | 'frozen' | 'expired' | 'cancelled';
+  sessions_used: number;
+  frozen_at?: string | null;
+  total_frozen_days: number;
+  client_uuid?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
-export interface WriteQueueItem {
-  id?: number; // Auto-incrementing local queue ID
-  uuid: string; // UUID of domain model
-  table: 'members' | 'membership_plans' | 'attendance';
-  action: 'create' | 'update';
-  payload: any;
-  timestamp: string;
-}
-
-export interface LocalSyncConflictLog {
-  id: string;
-  table_name: string;
-  record_id: string;
-  client_payload: any;
-  server_payload: any;
-  resolved: boolean;
-  created_at: string;
+export interface CacheAttendance {
+  id: string; // UUID primary key
+  tenant_id: string;
+  member_id: string;
+  member_plan_id: string | null;
+  checked_in_at: string;
+  checked_in_by: string | null;
+  method: 'manual' | 'qr_scan' | 'kiosk';
+  synced_at: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 class GymDatabase extends Dexie {
-  members!: Table<LocalMember, string>;
-  membershipPlans!: Table<LocalMembershipPlan, string>;
-  attendance!: Table<LocalAttendance, string>;
-  writeQueue!: Table<WriteQueueItem, number>;
-  syncConflictLogs!: Table<LocalSyncConflictLog, string>;
+  outbox!: Table<OutboxItem, number>;
+  cache_members!: Table<CacheMember, string>;
+  cache_plans!: Table<CachePlan, string>;
+  cache_member_plans!: Table<CacheMemberPlan, string>;
+  cache_attendances!: Table<CacheAttendance, string>;
 
   constructor() {
     super('GymDatabase');
-    this.version(1).stores({
-      members: 'id, membership_plan_id, status',
-      membershipPlans: 'id, is_active',
-      attendance: 'id, member_id, checked_in_at',
-      writeQueue: '++id, uuid, table, action',
-      syncConflictLogs: 'id, table_name, record_id, resolved',
+    // Bump database version to 2 for updated schema stores
+    this.version(2).stores({
+      outbox: '++localId, entity, clientUuid, status',
+      cache_members: 'id, status',
+      cache_plans: 'id, is_active',
+      cache_member_plans: 'id, member_id, plan_id, status',
+      cache_attendances: 'id, member_id, member_plan_id, checked_in_at',
     });
   }
 }

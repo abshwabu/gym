@@ -57,4 +57,5 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // Offline Batch Sync
     Route::post('/sync', [SyncController::class, 'sync']);
+    Route::get('/sync/changes', [SyncController::class, 'changes']);
 });

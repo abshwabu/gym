@@ -82,18 +82,19 @@ return new class extends Migration
             $table->foreign('checked_in_by')->references('id')->on('users')->onDelete('set null');
         });
 
-        // 5. Create sync conflict logs table
-        Schema::create('sync_conflict_logs', function (Blueprint $table) {
+        // 5. Create sync conflicts table
+        Schema::create('sync_conflicts', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('tenant_id')->index();
-            $table->string('table_name', 100);
-            $table->uuid('record_id');
+            $table->string('entity_type', 100);
+            $table->uuid('entity_id');
             $table->json('client_payload');
             $table->json('server_payload');
-            $table->boolean('resolved')->default(false);
+            $table->uuid('resolved_by')->nullable()->index();
             $table->timestamps();
 
             $table->foreign('tenant_id')->references('id')->on('tenants')->onDelete('cascade');
+            $table->foreign('resolved_by')->references('id')->on('users')->onDelete('set null');
         });
     }
 
@@ -102,7 +103,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('sync_conflict_logs');
+        Schema::dropIfExists('sync_conflicts');
         Schema::dropIfExists('attendances');
         Schema::dropIfExists('member_plans');
         Schema::dropIfExists('members');

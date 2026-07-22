@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Member;
-use App\Models\SyncConflictLog;
+use App\Models\SyncConflict;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
@@ -43,12 +43,11 @@ class MemberController extends Controller
 
             if ($clientUpdatedAt->lt($serverUpdatedAt)) {
                 // Client payload is older, log conflict and keep server record
-                SyncConflictLog::create([
-                    'table_name' => 'members',
-                    'record_id' => $member->id,
+                SyncConflict::create([
+                    'entity_type' => 'members',
+                    'entity_id' => $member->id,
                     'client_payload' => $request->all(),
                     'server_payload' => $member->toArray(),
-                    'resolved' => false,
                 ]);
 
                 return response()->json($member->load('activeMemberPlan.plan'), 200); // Return server version

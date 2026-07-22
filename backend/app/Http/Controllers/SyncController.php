@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Attendance;
 use App\Models\Member;
 use App\Models\Plan;
-use App\Models\SyncConflictLog;
+use App\Models\SyncConflict;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -51,12 +51,11 @@ class SyncController extends Controller
 
                         if ($clientTimestamp->lt($serverUpdatedAt)) {
                             // Client change is older. Log conflict, skip update, keep server version.
-                            SyncConflictLog::create([
-                                'table_name' => 'plans',
-                                'record_id' => $uuid,
+                            SyncConflict::create([
+                                'entity_type' => 'plans',
+                                'entity_id' => $uuid,
                                 'client_payload' => $payload,
                                 'server_payload' => $plan->toArray(),
-                                'resolved' => false,
                             ]);
                             $conflicts[] = $uuid;
                             $syncedIds[] = $clientQueueId;
@@ -75,12 +74,11 @@ class SyncController extends Controller
 
                         if ($clientTimestamp->lt($serverUpdatedAt)) {
                             // Client change is older. Log conflict, skip update, keep server version.
-                            SyncConflictLog::create([
-                                'table_name' => 'members',
-                                'record_id' => $uuid,
+                            SyncConflict::create([
+                                'entity_type' => 'members',
+                                'entity_id' => $uuid,
                                 'client_payload' => $payload,
                                 'server_payload' => $member->toArray(),
-                                'resolved' => false,
                             ]);
                             $conflicts[] = $uuid;
                             $syncedIds[] = $clientQueueId;
@@ -108,6 +106,34 @@ class SyncController extends Controller
             'success' => true,
             'synced_ids' => $syncedIds,
             'conflicts' => $conflicts,
+        ]);
+    }
+
+    /**
+     * Retrieve all records touched after the given timestamp for delta sync.
+     */
+    public function changes(Request $request)
+    {
+        $request->validate([
+            'since' => 'nullable|date',
+        ]);
+
+        $since = $request->input('since')
+            ? Carbon::parse($request->input('since'))
+            : Carbon::createFromTimestamp(0);
+
+        $members = Member::where('updated_at', '>', $since)->get();
+        // Include soft-deleted plans so client caches can reconcile deletions
+        $plans = Plan::withTrashed()->where('updated_at', '>', $since)->get();
+        $memberPlans = MemberPlan::where('updated_at', '>', $since)->get();
+        $attendances = Attendance::where('updated_at', '>', $since)->get();
+
+        return response()->json([
+            'since' => $since->toIso8601String(),
+            'members' => $members,
+            'plans' => $plans,
+            'member_plans' => $memberPlans,
+            'attendances' => $attendances,
         ]);
     }
 }
