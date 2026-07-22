@@ -194,7 +194,7 @@ const LicenseLockScreen = ({ message }: { message: string }) => {
 };
 
 // --- AUTHENTICATION GUARD ---
-const AuthGuard = ({ children }: { children: React.ReactNode }) => {
+const AuthGuard = ({ children, licenseValid }: { children: React.ReactNode; licenseValid: boolean }) => {
   const token = localStorage.getItem('gym_auth_token');
   const location = useLocation();
 
@@ -203,8 +203,8 @@ const AuthGuard = ({ children }: { children: React.ReactNode }) => {
   }
 
   const licenseCheck = checkLicenseOffline();
-  if (!licenseCheck.valid) {
-    return <LicenseLockScreen message={licenseCheck.message} />;
+  if (!licenseValid || !licenseCheck.valid) {
+    return <LicenseLockScreen message={!licenseValid ? 'License is expired or revoked. Please contact support.' : licenseCheck.message} />;
   }
 
   return <>{children}</>;
@@ -536,6 +536,7 @@ export default function App() {
   const [privileges, setPrivileges] = useState<string[]>(JSON.parse(localStorage.getItem('user_privileges') || '[]'));
   const [roles, setRoles] = useState<string[]>(JSON.parse(localStorage.getItem('user_roles') || '[]'));
   const [user, setUser] = useState<any>(JSON.parse(localStorage.getItem('user_info') || 'null'));
+  const [licenseValid, setLicenseValid] = useState<boolean>(true);
 
   // Connectivity indicators
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -668,7 +669,11 @@ export default function App() {
             const data = await response.json();
             if (data.token) {
               localStorage.setItem('license_token', data.token);
+              setLicenseValid(true);
             }
+          } else if (response.status === 403 || response.status === 401) {
+            localStorage.removeItem('license_token');
+            setLicenseValid(false);
           }
         } catch (e) {
           console.error('Auto license token refresh failed:', e);
@@ -678,6 +683,8 @@ export default function App() {
 
     fetchLicenseToken();
   }, [token, isOnline, user]);
+
+
 
   // Force a manual outbox synchronization
   const triggerManualSync = async () => {
@@ -747,6 +754,19 @@ export default function App() {
     },
     enabled: !!token,
   });
+
+  // Automatic quick check-in if checkinSearch matches a member UUID exactly (e.g. from QR scans)
+  useEffect(() => {
+    const trimmed = checkinSearch.trim();
+    if (trimmed.length === 36) { // UUID standard length
+      const match = members.find((m: any) => m.id === trimmed && m.status === 'Active');
+      if (match) {
+        handleCheckin(match.id);
+        setCheckinSearch('');
+        showToast(`Checked in: ${match.first_name} ${match.last_name}`, 'success');
+      }
+    }
+  }, [checkinSearch, members]);
 
   // Query staff users (real-time only)
   const { data: staff = [], refetch: refetchStaff } = useQuery({
@@ -998,6 +1018,95 @@ export default function App() {
     } catch (err) {
       showToast('Error assigning plan.', 'error');
     }
+  };
+
+  // Print membership CR80 card pass
+  const handlePrintPass = (member: any) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Print Membership Pass - ${member.first_name} ${member.last_name}</title>
+          <style>
+            @page { size: 3.375in 2.125in; margin: 0; }
+            body {
+              margin: 0;
+              padding: 12px;
+              font-family: 'Inter', -apple-system, sans-serif;
+              background-color: #0b0f19;
+              color: #f8fafc;
+              width: 3.375in;
+              height: 2.125in;
+              box-sizing: border-box;
+              display: flex;
+              align-items: center;
+              gap: 16px;
+              border: 1px solid #1f2937;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .qr-code {
+              width: 1.1in;
+              height: 1.1in;
+              border: 3px solid #fff;
+              border-radius: 4px;
+              background-color: #fff;
+            }
+            .info {
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              text-align: left;
+            }
+            .brand {
+              font-size: 8px;
+              font-weight: 700;
+              letter-spacing: 1.5px;
+              text-transform: uppercase;
+              color: #0d9488;
+              margin-bottom: 4px;
+            }
+            .name {
+              font-size: 14px;
+              font-weight: bold;
+              margin-bottom: 2px;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+            }
+            .id {
+              font-size: 9px;
+              font-family: monospace;
+              color: #94a3b8;
+              margin-bottom: 6px;
+            }
+            .badge {
+              display: inline-block;
+              font-size: 8px;
+              font-weight: bold;
+              padding: 2px 6px;
+              border-radius: 4px;
+              background-color: rgba(16, 185, 129, 0.15);
+              color: #10b981;
+              border: 1px solid rgba(16, 185, 129, 0.3);
+              width: fit-content;
+            }
+          </style>
+        </head>
+        <body onload="window.print(); window.close();">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&color=0d9488&data=${member.id}" class="qr-code" />
+          <div class="info">
+            <div class="brand">Apex Gym Pass</div>
+            <div class="name">${member.first_name} ${member.last_name}</div>
+            <div class="id">ID: ${member.id.substring(0,8)}</div>
+            <div class="badge">ACTIVE MEMBER</div>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   // Freeze / Unfreeze plan subscription (Optimistic UI)
@@ -1415,7 +1524,7 @@ export default function App() {
 
         {/* Protected route tree */}
         <Route path="/*" element={
-          <AuthGuard>
+          <AuthGuard licenseValid={licenseValid}>
             {user?.is_super_admin ? (
               <SuperAdminLayout />
             ) : (
@@ -2025,48 +2134,66 @@ export default function App() {
                     <span className={`badge badge-${selectedMemberProfile.status.toLowerCase()}`}>{selectedMemberProfile.status}</span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '24px', marginBottom: '24px' }}>
                     <div>
-                      <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '8px' }}>Personal Info</h4>
-                      <p style={{ fontSize: '14px', marginBottom: '4px' }}><strong>Email:</strong> {selectedMemberProfile.email || 'N/A'}</p>
-                      <p style={{ fontSize: '14px' }}><strong>Phone:</strong> {selectedMemberProfile.phone || 'N/A'}</p>
-                    </div>
+                      <div style={{ marginBottom: '20px' }}>
+                        <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '8px' }}>Personal Info</h4>
+                        <p style={{ fontSize: '14px', marginBottom: '4px' }}><strong>Email:</strong> {selectedMemberProfile.email || 'N/A'}</p>
+                        <p style={{ fontSize: '14px' }}><strong>Phone:</strong> {selectedMemberProfile.phone || 'N/A'}</p>
+                      </div>
 
-                    <div>
-                      <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '8px' }}>Current Subscription</h4>
-                      {selectedMemberProfile.active_plan ? (
-                        <div style={{ padding: '12px', backgroundColor: 'var(--bg-primary)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
-                          <div style={{ fontWeight: 'bold', fontSize: '15px', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>{selectedMemberProfile.active_plan.plan?.name || 'Assigned Plan'}</span>
-                            <span className={`badge badge-${selectedMemberProfile.active_plan.status}`}>{selectedMemberProfile.active_plan.status}</span>
+                      <div>
+                        <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '8px' }}>Current Subscription</h4>
+                        {selectedMemberProfile.active_plan ? (
+                          <div style={{ padding: '12px', backgroundColor: 'var(--bg-primary)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>{selectedMemberProfile.active_plan.plan?.name || 'Assigned Plan'}</span>
+                              <span className={`badge badge-${selectedMemberProfile.active_plan.status}`}>{selectedMemberProfile.active_plan.status}</span>
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                              Expires: {new Date(selectedMemberProfile.active_plan.expires_at).toLocaleDateString()}
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              Sessions: {selectedMemberProfile.active_plan.plan?.session_limit !== null ? `${selectedMemberProfile.active_plan.sessions_used} / ${selectedMemberProfile.active_plan.plan?.session_limit}` : `${selectedMemberProfile.active_plan.sessions_used} used (unlimited)`}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                              {hasPrivilege('members.create') && (
+                                <button onClick={() => handleToggleFreeze(selectedMemberProfile.active_plan)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', width: '100%' }}>
+                                  {selectedMemberProfile.active_plan.status === 'frozen' ? 'Unfreeze' : 'Freeze'}
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                            Expires: {new Date(selectedMemberProfile.active_plan.expires_at).toLocaleDateString()}
-                          </div>
-                          <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                            Sessions: {selectedMemberProfile.active_plan.plan?.session_limit !== null ? `${selectedMemberProfile.active_plan.sessions_used} / ${selectedMemberProfile.active_plan.plan?.session_limit}` : `${selectedMemberProfile.active_plan.sessions_used} used (unlimited)`}
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                        ) : (
+                          <div>
+                            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>No active subscription plan.</p>
                             {hasPrivilege('members.create') && (
-                              <button onClick={() => handleToggleFreeze(selectedMemberProfile.active_plan)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', width: '100%' }}>
-                                {selectedMemberProfile.active_plan.status === 'frozen' ? 'Unfreeze' : 'Freeze'}
+                              <button onClick={() => {
+                                setAssignPlanForm({ plan_id: plans[0]?.id || '', starts_at: new Date().toISOString().substring(0, 10), expires_at: '', manual_expiry: false });
+                                setShowAssignPlanModal(true);
+                              }} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+                                Assign Membership Plan
                               </button>
                             )}
                           </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>No active subscription plan.</p>
-                          {hasPrivilege('members.create') && (
-                            <button onClick={() => {
-                              setAssignPlanForm({ plan_id: plans[0]?.id || '', starts_at: new Date().toISOString().substring(0, 10), expires_at: '', manual_expiry: false });
-                              setShowAssignPlanModal(true);
-                            }} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>
-                              Assign Membership Plan
-                            </button>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Member ID QR Card Pass */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', backgroundColor: 'rgba(0,0,0,0.2)', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.3)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase', color: 'var(--accent-color)', marginBottom: '12px' }}>Apex Gym Pass</div>
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&color=0d9488&data=${selectedMemberProfile.id}`}
+                        alt="Member QR Pass"
+                        style={{ border: '4px solid #fff', borderRadius: '8px', marginBottom: '12px', backgroundColor: '#fff', boxShadow: '0 4px 10px rgba(0,0,0,0.3)' }}
+                      />
+                      <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text-main)' }}>{selectedMemberProfile.first_name} {selectedMemberProfile.last_name}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '2px' }}>ID: {selectedMemberProfile.id.substring(0,8)}...</div>
+                      <span className={`badge badge-${selectedMemberProfile.status.toLowerCase()}`} style={{ marginTop: '10px' }}>{selectedMemberProfile.status}</span>
+                      <button onClick={() => handlePrintPass(selectedMemberProfile)} className="btn btn-secondary" style={{ marginTop: '14px', width: '100%', fontSize: '12px', padding: '6px 12px' }}>
+                        Print Membership Card
+                      </button>
                     </div>
                   </div>
 
