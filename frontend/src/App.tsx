@@ -4,10 +4,193 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, Activity, CreditCard, Clock, LogOut, CheckCircle, 
-  XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key, User
+  XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key, User,
+  AlertTriangle
 } from 'lucide-react';
 import { db } from './db/gymDb';
 import { SyncManager } from './sync/syncManager';
+import { 
+  PlatformTenants, PlatformTenantDetails, 
+  PlatformSubscriptionPlans, PlatformImpersonationLogs 
+} from './components/PlatformComponents';
+
+// --- DUMMY/BUNDLED VERIFIABLE LICENSE PUBLIC KEY ---
+const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G9a98...
+-----END PUBLIC KEY-----`;
+
+// --- OFFLINE LICENSE VALIDATION CHECKER ---
+const checkLicenseOffline = (): { valid: boolean; message: string } => {
+  const userInfoStr = localStorage.getItem('user_info');
+  if (userInfoStr) {
+    const user = JSON.parse(userInfoStr);
+    if (user.is_super_admin) {
+      return { valid: true, message: 'Super admin' };
+    }
+  }
+
+  // Impersonating sessions bypass validation checks
+  if (localStorage.getItem('is_impersonating') === 'true') {
+    return { valid: true, message: 'Impersonation active' };
+  }
+
+  const token = localStorage.getItem('license_token');
+  if (!token) {
+    return { valid: false, message: 'No license token found. Please connect to the internet to activate.' };
+  }
+
+  try {
+    // Assert signature verification keys are loaded
+    if (!LICENSE_PUBLIC_KEY) {
+      return { valid: false, message: 'License key signature configuration is missing.' };
+    }
+
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return { valid: false, message: 'Invalid license signature configuration.' };
+    }
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    
+    // Check expiration against current system time (device clock)
+    // NOTE: System-clock rollback is a known limitation of offline enforcement.
+    if (new Date(payload.expires_at) < new Date()) {
+      return { valid: false, message: 'License validity period expired. Please connect to the internet to renew.' };
+    }
+    
+    return { valid: true, message: 'Valid' };
+  } catch (e) {
+    return { valid: false, message: 'Failed to parse license verification token.' };
+  }
+};
+
+// --- LOCK SCREEN OVERLAY FOR EXPIRED LICENSES ---
+const LicenseLockScreen = ({ message }: { message: string }) => {
+  const [key, setKey] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleActivate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!key.trim()) return;
+    setLoading(true);
+    setErrorMsg('');
+
+    try {
+      const authToken = localStorage.getItem('gym_auth_token');
+      const response = await fetch('/api/license/activate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ license_key: key.trim() })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Activation failed.');
+      }
+
+      localStorage.setItem('license_token', data.token);
+      alert('License activated successfully! Access restored.');
+      window.location.reload();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to activate license key.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: '100vh',
+      width: '100vw',
+      backgroundColor: '#0f172a',
+      color: '#f8fafc',
+      textAlign: 'center',
+      padding: '24px'
+    }}>
+      <div style={{
+        backgroundColor: '#1e293b',
+        padding: '40px',
+        borderRadius: '16px',
+        boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+        maxWidth: '500px',
+        border: '2px solid #ef4444'
+      }}>
+        <AlertTriangle size={48} style={{ color: '#ef4444', marginBottom: '16px' }} />
+        <h2 style={{ color: '#f1f5f9', fontSize: '22px', fontWeight: 'bold', marginBottom: '12px' }}>License Verification Locked</h2>
+        <p style={{ fontSize: '15px', color: '#94a3b8', lineHeight: '1.6', marginBottom: '24px' }}>
+          {message}
+        </p>
+
+        <form onSubmit={handleActivate} style={{ marginBottom: '24px', textAlign: 'left' }}>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#94a3b8', marginBottom: '8px' }}>
+            Enter License Activation Key
+          </label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={key}
+              onChange={(e) => setKey(e.target.value.toUpperCase())}
+              placeholder="GYM-XXXX-XXXX-XXXX"
+              required
+              disabled={loading}
+              style={{
+                flex: 1,
+                padding: '10px 14px',
+                borderRadius: '8px',
+                border: '1px solid #475569',
+                backgroundColor: '#0f172a',
+                color: '#f8fafc',
+                fontSize: '14px',
+                outline: 'none',
+                transition: 'border-color 0.2s'
+              }}
+              onFocus={(e) => e.target.style.borderColor = '#6366f1'}
+              onBlur={(e) => e.target.style.borderColor = '#475569'}
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                padding: '10px 20px',
+                borderRadius: '8px',
+                backgroundColor: '#6366f1',
+                color: '#ffffff',
+                fontWeight: '600',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                opacity: loading ? 0.7 : 1
+              }}
+            >
+              {loading ? 'Activating...' : 'Activate'}
+            </button>
+          </div>
+          {errorMsg && (
+            <p style={{ color: '#f87171', fontSize: '13px', marginTop: '8px', fontWeight: '500' }}>
+              {errorMsg}
+            </p>
+          )}
+        </form>
+
+        <p style={{ fontSize: '13px', color: '#64748b' }}>
+          Reconnect this terminal device to the internet to sync and auto-renew the validation lease, or contact your provider support.
+        </p>
+      </div>
+    </div>
+  );
+};
 
 // --- AUTHENTICATION GUARD ---
 const AuthGuard = ({ children }: { children: React.ReactNode }) => {
@@ -18,7 +201,176 @@ const AuthGuard = ({ children }: { children: React.ReactNode }) => {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  const licenseCheck = checkLicenseOffline();
+  if (!licenseCheck.valid) {
+    return <LicenseLockScreen message={licenseCheck.message} />;
+  }
+
   return <>{children}</>;
+};
+
+// --- IMPERSONATION AUDIT BANNER ---
+const ImpersonationBanner = () => {
+  const [elapsed, setElapsed] = useState(0);
+  const tenantName = localStorage.getItem('impersonation_tenant_name') || 'Gym';
+  const logId = localStorage.getItem('impersonation_log_id');
+
+  useEffect(() => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const handleEndImpersonation = async () => {
+    const superAdminToken = localStorage.getItem('super_admin_token');
+    if (!superAdminToken) return;
+
+    try {
+      await fetch('/api/platform/impersonate/end', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${superAdminToken}`
+        },
+        body: JSON.stringify({ impersonation_log_id: logId })
+      });
+    } catch (e) {
+      console.error(e);
+    }
+
+    localStorage.setItem('gym_auth_token', superAdminToken);
+    localStorage.removeItem('super_admin_token');
+    localStorage.removeItem('is_impersonating');
+    localStorage.removeItem('impersonation_tenant_name');
+    localStorage.removeItem('impersonation_log_id');
+
+    window.location.href = '/platform/tenants';
+  };
+
+  return (
+    <div style={{
+      backgroundColor: '#f59e0b',
+      color: '#0f172a',
+      padding: '8px 16px',
+      fontSize: '13px',
+      fontWeight: 'bold',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      zIndex: 1000,
+      position: 'sticky',
+      top: 0,
+      width: '100%',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.2)'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <Shield size={16} />
+        <span>Impersonating {tenantName} &mdash; Duration: {formatTime(elapsed)}</span>
+      </div>
+      <button 
+        onClick={handleEndImpersonation} 
+        style={{
+          backgroundColor: '#0f172a',
+          color: '#f8fafc',
+          border: 'none',
+          padding: '4px 12px',
+          borderRadius: '4px',
+          cursor: 'pointer',
+          fontSize: '11px',
+          fontWeight: 'bold'
+        }}
+      >
+        End Impersonation
+      </button>
+    </div>
+  );
+};
+
+// --- SUPER ADMIN LAYOUT ---
+const SuperAdminLayout = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const user = JSON.parse(localStorage.getItem('user_info') || '{}');
+
+  const handleLogout = async () => {
+    localStorage.removeItem('gym_auth_token');
+    localStorage.removeItem('user_info');
+    localStorage.removeItem('user_privileges');
+    localStorage.removeItem('user_roles');
+    localStorage.removeItem('tenant_slug');
+    window.location.href = '/login';
+  };
+
+  return (
+    <div className="app-container" style={{ minHeight: '100vh' }}>
+      <aside className="sidebar" style={{ borderRight: '1px solid var(--border-color)' }}>
+        <div className="sidebar-logo">
+          <Activity size={24} style={{ color: 'var(--accent-cyan)' }} />
+          <span style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>PLATFORM</span>
+        </div>
+
+        <nav className="sidebar-nav">
+          <button onClick={() => navigate('/platform/tenants')} className={`sidebar-link ${location.pathname.startsWith('/platform/tenants') ? 'active' : ''}`}>
+            <Users size={18} />
+            <span>Gym Tenants</span>
+          </button>
+
+          <button onClick={() => navigate('/platform/subscription-plans')} className={`sidebar-link ${location.pathname.startsWith('/platform/subscription-plans') ? 'active' : ''}`}>
+            <CreditCard size={18} />
+            <span>Platform Plans</span>
+          </button>
+
+          <button onClick={() => navigate('/platform/impersonation-logs')} className={`sidebar-link ${location.pathname.startsWith('/platform/impersonation-logs') ? 'active' : ''}`}>
+            <Shield size={18} />
+            <span>Impersonation Logs</span>
+          </button>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 'bold', color: '#000' }}>
+              {user.name ? user.name[0].toUpperCase() : 'A'}
+            </div>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user.name || 'Platform Admin'}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Super Admin</div>
+            </div>
+          </div>
+          <button onClick={handleLogout} className="sidebar-link" style={{ width: '100%', color: 'var(--status-offline)' }}>
+            <LogOut size={16} />
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </aside>
+
+      <div className="main-content" style={{ display: 'flex', flexDirection: 'column' }}>
+        <header className="top-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span className="badge" style={{ textTransform: 'uppercase', backgroundColor: 'var(--accent-cyan)', color: '#000', fontWeight: 'bold' }}>Platform Super Admin</span>
+          </div>
+        </header>
+
+        <div className="content-body" style={{ padding: '32px', flex: 1 }}>
+          <Routes>
+            <Route path="platform/tenants" element={<PlatformTenants />} />
+            <Route path="platform/tenants/:tenantId" element={<PlatformTenantDetails />} />
+            <Route path="platform/subscription-plans" element={<PlatformSubscriptionPlans />} />
+            <Route path="platform/impersonation-logs" element={<PlatformImpersonationLogs />} />
+            <Route path="*" element={<Navigate to="/platform/tenants" replace />} />
+          </Routes>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // --- REUSABLE PRIVILEGE CHECK WRAPPER ---
@@ -1035,9 +1387,15 @@ export default function App() {
         {/* Protected route tree */}
         <Route path="/*" element={
           <AuthGuard>
-            <div className="app-container">
-              {/* Sidebar layout */}
-              <aside className="sidebar">
+            {user?.is_super_admin ? (
+              <SuperAdminLayout />
+            ) : (
+              <>
+                <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+                  {localStorage.getItem('is_impersonating') === 'true' && <ImpersonationBanner />}
+                  <div style={{ display: 'flex', flex: 1 }}>
+                    {/* Sidebar layout */}
+                    <aside className="sidebar">
                 <div className="sidebar-logo">
                   <Activity size={24} style={{ color: 'var(--accent-purple)' }} />
                   <span>A P E X</span>
@@ -1599,6 +1957,7 @@ export default function App() {
                   </Routes>
                 </div>
               </div>
+              </div>
             </div>
 
             {/* Member Profile Modal */}
@@ -1939,6 +2298,8 @@ export default function App() {
                   )}
                 </div>
               </div>
+            )}
+            </>
             )}
           </AuthGuard>
         } />

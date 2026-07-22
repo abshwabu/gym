@@ -81,10 +81,17 @@ class PlatformController extends Controller
             ->where('is_tenant_owner', true)
             ->first();
 
-        $activationUrl = URL::temporarySignedRoute(
+        $backendUrl = URL::temporarySignedRoute(
             'invitation.activate',
             now()->addDays(3),
             ['user' => $owner->id]
+        );
+
+        $frontendHost = env('FRONTEND_URL', 'http://localhost:5173');
+        $activationUrl = str_replace(
+            url('/api/staff/activate'),
+            $frontendHost . '/accept-invite',
+            $backendUrl
         );
 
         return response()->json([
@@ -136,10 +143,17 @@ class PlatformController extends Controller
 
         $owner->update(['status' => 'invited']);
 
-        $activationUrl = URL::temporarySignedRoute(
+        $backendUrl = URL::temporarySignedRoute(
             'invitation.activate',
             now()->addDays(3),
             ['user' => $owner->id]
+        );
+
+        $frontendHost = env('FRONTEND_URL', 'http://localhost:5173');
+        $activationUrl = str_replace(
+            url('/api/staff/activate'),
+            $frontendHost . '/accept-invite',
+            $backendUrl
         );
 
         return response()->json([

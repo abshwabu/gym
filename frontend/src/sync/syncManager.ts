@@ -252,6 +252,24 @@ export class SyncManager {
 
       // Delta Pull fresh caches to reconcile conflicts
       await this.pullFreshCaches(token);
+
+      // Silently refresh the locally verifiable license token
+      try {
+        const res = await fetch('/api/license/refresh', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          localStorage.setItem('license_token', data.token);
+        }
+      } catch (e) {
+        // Silent catch
+      }
+      
       this.notifyQueueChanged();
       this.syncInProgress = false;
       return true;

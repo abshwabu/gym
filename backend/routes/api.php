@@ -53,6 +53,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     // Client license token refresh
     Route::post('/license/refresh', [LicenseController::class, 'refresh']);
+    Route::post('/license/activate', [LicenseController::class, 'activate']);
 
     // Staff invitations & management
     Route::get('/staff', [InvitationController::class, 'index'])->middleware('privilege:staff.view');

@@ -68,10 +68,17 @@ class InvitationController extends Controller
         $user->roles()->sync($request->role_ids);
 
         // Generate signed route URL (valid for 3 days)
-        $activationUrl = URL::temporarySignedRoute(
+        $backendUrl = URL::temporarySignedRoute(
             'invitation.activate',
             now()->addDays(3),
             ['user' => $user->id]
+        );
+
+        $frontendHost = env('FRONTEND_URL', 'http://localhost:5173');
+        $activationUrl = str_replace(
+            url('/api/staff/activate'),
+            $frontendHost . '/accept-invite',
+            $backendUrl
         );
 
         return response()->json([
@@ -90,10 +97,17 @@ class InvitationController extends Controller
             return response()->json(['message' => 'Cannot resend: user is already active.'], 400);
         }
 
-        $activationUrl = URL::temporarySignedRoute(
+        $backendUrl = URL::temporarySignedRoute(
             'invitation.activate',
             now()->addDays(3),
             ['user' => $user->id]
+        );
+
+        $frontendHost = env('FRONTEND_URL', 'http://localhost:5173');
+        $activationUrl = str_replace(
+            url('/api/staff/activate'),
+            $frontendHost . '/accept-invite',
+            $backendUrl
         );
 
         return response()->json([
