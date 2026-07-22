@@ -13,6 +13,27 @@ class MemberPlan extends Model
 {
     use HasFactory, HasUuids, BelongsToTenant;
 
+    protected static function booted()
+    {
+        static::created(function ($memberPlan) {
+            $plan = $memberPlan->plan;
+            if ($plan) {
+                if (!$memberPlan->client_uuid) {
+                    Invoice::create([
+                        'tenant_id' => $memberPlan->tenant_id,
+                        'member_id' => $memberPlan->member_id,
+                        'member_plan_id' => $memberPlan->id,
+                        'amount' => $plan->price,
+                        'currency' => $plan->currency ?: 'USD',
+                        'status' => 'unpaid',
+                        'issued_at' => now(),
+                        'due_at' => now()->addDays(7),
+                    ]);
+                }
+            }
+        });
+    }
+
     protected $fillable = [
         'tenant_id',
         'member_id',

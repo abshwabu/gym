@@ -13,6 +13,10 @@ use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\PlatformController;
 use App\Http\Controllers\LicenseController;
+use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\FinanceReportController;
 
 // Unauthenticated routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -94,4 +98,23 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     // Offline Batch Sync
     Route::post('/sync', [SyncController::class, 'sync']);
     Route::get('/sync/changes', [SyncController::class, 'changes']);
+
+    // Finance Invoices
+    Route::get('/invoices', [InvoiceController::class, 'index'])->middleware('privilege:finance.view');
+    Route::post('/invoices', [InvoiceController::class, 'store'])->middleware('privilege:finance.invoices.manage');
+    Route::patch('/invoices/{invoice}', [InvoiceController::class, 'update'])->middleware('privilege:finance.invoices.manage');
+
+    // Finance Payments
+    Route::post('/payments', [PaymentController::class, 'store'])->middleware('privilege:finance.payments.record');
+    Route::post('/payments/bulk', [PaymentController::class, 'bulk'])->middleware('privilege:finance.payments.record');
+
+    // Finance Expenses
+    Route::get('/expenses', [ExpenseController::class, 'index'])->middleware('privilege:finance.view');
+    Route::post('/expenses', [ExpenseController::class, 'store'])->middleware('privilege:finance.expenses.manage');
+    Route::patch('/expenses/{expense}', [ExpenseController::class, 'update'])->middleware('privilege:finance.expenses.manage');
+    Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->middleware('privilege:finance.expenses.manage');
+
+    // Finance Reports
+    Route::get('/finance/reports/revenue', [FinanceReportController::class, 'revenue'])->middleware('privilege:finance.reports.view');
+    Route::get('/finance/reports/outstanding', [FinanceReportController::class, 'outstanding'])->middleware('privilege:finance.reports.view');
 });

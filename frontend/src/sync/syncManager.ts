@@ -201,6 +201,49 @@ export class SyncManager {
           }
         }
 
+        // Group contiguous payments to make a bulk call
+        if (currentItem.entity === 'payments' && currentItem.method === 'create') {
+          const batch: OutboxItem[] = [];
+          let j = index;
+          while (
+            j < pendingItems.length &&
+            pendingItems[j].entity === 'payments' &&
+            pendingItems[j].method === 'create'
+          ) {
+            batch.push(pendingItems[j]);
+            j++;
+          }
+
+          const payloadBatch = batch.map(item => ({
+            ...item.payload,
+            id: item.clientUuid,
+          }));
+
+          const { status, data } = await this.apiRequest('/payments/bulk', 'POST', {
+            payments: payloadBatch,
+          }, token);
+
+          if (status === 200 && data.results) {
+            for (let k = 0; k < batch.length; k++) {
+              const outboxItem = batch[k];
+              const res = data.results.find((r: any) => r.id === outboxItem.clientUuid);
+              if (res) {
+                await db.outbox.update(outboxItem.localId!, { status: 'synced' });
+              } else {
+                await db.outbox.update(outboxItem.localId!, { status: 'conflict' });
+              }
+            }
+            index = j;
+            continue;
+          } else {
+            for (const item of batch) {
+              await db.outbox.update(item.localId!, { status: 'conflict' });
+            }
+            index = j;
+            continue;
+          }
+        }
+
         // 2. Individual endpoint uploads for editable entities
         let path = '';
         let method = 'POST';
@@ -209,6 +252,25 @@ export class SyncManager {
         if (currentItem.entity === 'members') {
           path = '/members';
           method = 'POST';
+        } else if (currentItem.entity === 'invoices') {
+          if (currentItem.method === 'create') {
+            path = '/invoices';
+            method = 'POST';
+          } else if (currentItem.method === 'update') {
+            path = `/invoices/${currentItem.clientUuid}`;
+            method = 'PATCH';
+          }
+        } else if (currentItem.entity === 'expenses') {
+          if (currentItem.method === 'create') {
+            path = '/expenses';
+            method = 'POST';
+          } else if (currentItem.method === 'update') {
+            path = `/expenses/${currentItem.clientUuid}`;
+            method = 'PATCH';
+          } else if (currentItem.method === 'delete') {
+            path = `/expenses/${currentItem.clientUuid}`;
+            method = 'DELETE';
+          }
         } else if (currentItem.entity === 'plans') {
           if (currentItem.method === 'create') {
             path = '/plans';

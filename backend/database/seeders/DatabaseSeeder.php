@@ -64,6 +64,13 @@ class DatabaseSeeder extends Seeder
             ['key' => 'staff.invite', 'label' => 'Invite Staff', 'category' => 'Staff'],
             ['key' => 'staff.update', 'label' => 'Update Staff', 'category' => 'Staff'],
             ['key' => 'staff.disable', 'label' => 'Disable Staff', 'category' => 'Staff'],
+
+            // Finance
+            ['key' => 'finance.view', 'label' => 'View Finance Module', 'category' => 'Finance'],
+            ['key' => 'finance.invoices.manage', 'label' => 'Manage Invoices', 'category' => 'Finance'],
+            ['key' => 'finance.payments.record', 'label' => 'Record Payments', 'category' => 'Finance'],
+            ['key' => 'finance.expenses.manage', 'label' => 'Manage Expenses', 'category' => 'Finance'],
+            ['key' => 'finance.reports.view', 'label' => 'View Finance Reports', 'category' => 'Finance'],
         ];
 
         foreach ($privileges as $priv) {
@@ -77,18 +84,21 @@ class DatabaseSeeder extends Seeder
         }
 
         // 2. Use TenantProvisioning service to create the primary Tenant and its Owner
-        $provisioner = new TenantProvisioning();
-        $tenant = $provisioner->provision(
-            'Apex Fitness',
-            'apex',
-            'active',
-            [
-                'name' => 'Admin User',
-                'email' => 'admin@apex.com',
-                'password' => 'password',
-                'status' => 'active'
-            ]
-        );
+        $tenant = Tenant::where('slug', 'apex')->first();
+        if (!$tenant) {
+            $provisioner = new TenantProvisioning();
+            $tenant = $provisioner->provision(
+                'Apex Fitness',
+                'apex',
+                'active',
+                [
+                    'name' => 'Admin User',
+                    'email' => 'admin@apex.com',
+                    'password' => 'password',
+                    'status' => 'active'
+                ]
+            );
+        }
 
         // Set the context for seeding supplementary tenant-scoped records
         TenantContext::setTenant($tenant);
