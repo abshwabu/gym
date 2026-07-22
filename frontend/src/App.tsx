@@ -425,13 +425,13 @@ export default function App() {
       const data = await response.json();
       
       localStorage.setItem('gym_auth_token', data.token);
-      localStorage.setItem('tenant_slug', data.tenant.slug);
+      localStorage.setItem('tenant_slug', data.tenant ? data.tenant.slug : '');
       localStorage.setItem('user_privileges', JSON.stringify(data.privileges));
       localStorage.setItem('user_roles', JSON.stringify(data.roles));
       localStorage.setItem('user_info', JSON.stringify(data.user));
 
       setToken(data.token);
-      setTenantSlug(data.tenant.slug);
+      setTenantSlug(data.tenant ? data.tenant.slug : '');
       setPrivileges(data.privileges);
       setRoles(data.roles);
       setUser(data.user);
@@ -991,8 +991,7 @@ export default function App() {
                       id="tenant"
                       type="text"
                       className="form-input"
-                      required
-                      placeholder="e.g. apex"
+                      placeholder="e.g. apex (leave blank for Super Admin)"
                       value={loginForm.tenant_slug}
                       onChange={e => setLoginForm({ ...loginForm, tenant_slug: e.target.value })}
                     />
