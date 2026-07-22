@@ -110,16 +110,19 @@ class DatabaseSeeder extends Seeder
         // Set the context for seeding supplementary tenant-scoped records
         TenantContext::setTenant($tenant);
 
-        // 3. Create Manager and Front Desk roles
+        // 3. Create common tenant roles with exact privilege mappings
         $managerRole = Role::updateOrCreate(
             ['tenant_id' => $tenant->id, 'name' => 'Manager'],
             ['is_system_role' => false]
         );
         $managerPrivileges = Privilege::whereIn('key', [
-            'members.view', 'members.create', 'members.update',
-            'plans.view',
-            'attendance.view', 'attendance.mark',
-            'staff.view'
+            'members.view', 'members.create', 'members.update', 'members.delete',
+            'plans.view', 'plans.create', 'plans.update', 'plans.delete',
+            'attendance.view', 'attendance.mark', 'attendance.update',
+            'staff.view', 'staff.invite', 'staff.update', 'staff.disable',
+            'roles.view', 'roles.create', 'roles.update', 'roles.delete',
+            'finance.view', 'finance.invoices.manage', 'finance.payments.record', 'finance.expenses.manage', 'finance.reports.view',
+            'hr.staff.manage', 'hr.attendance.view', 'hr.shifts.manage', 'hr.leave.approve', 'hr.payroll.manage'
         ])->pluck('id')->toArray();
         $managerRole->privileges()->sync($managerPrivileges);
 
@@ -128,10 +131,40 @@ class DatabaseSeeder extends Seeder
             ['is_system_role' => false]
         );
         $frontDeskPrivileges = Privilege::whereIn('key', [
-            'members.view',
+            'members.view', 'members.create',
             'attendance.view', 'attendance.mark'
         ])->pluck('id')->toArray();
         $frontDeskRole->privileges()->sync($frontDeskPrivileges);
+
+        $financeRole = Role::updateOrCreate(
+            ['tenant_id' => $tenant->id, 'name' => 'Finance Admin'],
+            ['is_system_role' => false]
+        );
+        $financePrivileges = Privilege::whereIn('key', [
+            'members.view',
+            'finance.view', 'finance.invoices.manage', 'finance.payments.record', 'finance.expenses.manage', 'finance.reports.view'
+        ])->pluck('id')->toArray();
+        $financeRole->privileges()->sync($financePrivileges);
+
+        $hrRole = Role::updateOrCreate(
+            ['tenant_id' => $tenant->id, 'name' => 'HR Specialist'],
+            ['is_system_role' => false]
+        );
+        $hrPrivileges = Privilege::whereIn('key', [
+            'staff.view',
+            'hr.staff.manage', 'hr.attendance.view', 'hr.shifts.manage', 'hr.leave.approve', 'hr.payroll.manage'
+        ])->pluck('id')->toArray();
+        $hrRole->privileges()->sync($hrPrivileges);
+
+        $trainerRole = Role::updateOrCreate(
+            ['tenant_id' => $tenant->id, 'name' => 'Trainer'],
+            ['is_system_role' => false]
+        );
+        $trainerPrivileges = Privilege::whereIn('key', [
+            'members.view',
+            'attendance.view', 'attendance.mark'
+        ])->pluck('id')->toArray();
+        $trainerRole->privileges()->sync($trainerPrivileges);
 
         // 4. Create Staff User
         $staffUser = User::updateOrCreate(
@@ -145,7 +178,19 @@ class DatabaseSeeder extends Seeder
         );
         $staffUser->roles()->sync([$frontDeskRole->id]);
 
-        // 5. Seed Membership Plans
+        // 5. Seed common Membership Plans
+        $weeklyPlan = Plan::updateOrCreate(
+            ['tenant_id' => $tenant->id, 'name' => 'Weekly Basic'],
+            [
+                'id' => 'b11b5103-6251-4e78-95ea-c4e9cb5e4d00',
+                'billing_cycle' => 'weekly',
+                'price' => 14.99,
+                'currency' => 'USD',
+                'freeze_allowance_days' => 2,
+                'is_active' => true,
+            ]
+        );
+
         $monthlyPlan = Plan::updateOrCreate(
             ['tenant_id' => $tenant->id, 'name' => 'Monthly Premium'],
             [
@@ -158,6 +203,18 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
+        $platinumPlan = Plan::updateOrCreate(
+            ['tenant_id' => $tenant->id, 'name' => 'Platinum Unlimited'],
+            [
+                'id' => 'b11b5103-6251-4e78-95ea-c4e9cb5e4d03',
+                'billing_cycle' => 'monthly',
+                'price' => 79.99,
+                'currency' => 'USD',
+                'freeze_allowance_days' => 30,
+                'is_active' => true,
+            ]
+        );
+
         $annualPlan = Plan::updateOrCreate(
             ['tenant_id' => $tenant->id, 'name' => 'Annual Elite'],
             [
@@ -166,6 +223,19 @@ class DatabaseSeeder extends Seeder
                 'price' => 479.99,
                 'currency' => 'USD',
                 'freeze_allowance_days' => 45,
+                'is_active' => true,
+            ]
+        );
+
+        $punchPlan = Plan::updateOrCreate(
+            ['tenant_id' => $tenant->id, 'name' => '10-Session Pass'],
+            [
+                'id' => 'b11b5103-6251-4e78-95ea-c4e9cb5e4d04',
+                'billing_cycle' => 'monthly',
+                'price' => 99.00,
+                'currency' => 'USD',
+                'session_limit' => 10,
+                'freeze_allowance_days' => 0,
                 'is_active' => true,
             ]
         );
