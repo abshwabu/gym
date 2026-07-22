@@ -311,7 +311,7 @@ const SuperAdminLayout = () => {
   };
 
   return (
-    <div className="app-container" style={{ minHeight: '100vh' }}>
+    <div className="app-container platform-theme" style={{ minHeight: '100vh' }}>
       <aside className="sidebar" style={{ borderRight: '1px solid var(--border-color)' }}>
         <div className="sidebar-logo">
           <Activity size={24} style={{ color: 'var(--accent-cyan)' }} />
@@ -1391,7 +1391,7 @@ export default function App() {
               <SuperAdminLayout />
             ) : (
               <>
-                <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+                <div className="app-container tenant-theme" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
                   {localStorage.getItem('is_impersonating') === 'true' && <ImpersonationBanner />}
                   <div style={{ display: 'flex', flex: 1 }}>
                     {/* Sidebar layout */}
