@@ -5,7 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, Activity, CreditCard, Clock, LogOut, CheckCircle, 
   XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key, User,
-  AlertTriangle
+  AlertTriangle, DollarSign, Briefcase
 } from 'lucide-react';
 import { db } from './db/gymDb';
 import { SyncManager } from './sync/syncManager';
@@ -13,6 +13,7 @@ import {
   PlatformTenants, PlatformTenantDetails, 
   PlatformSubscriptionPlans, PlatformImpersonationLogs 
 } from './components/PlatformComponents';
+import { FinanceDashboard, HRDashboard } from './components/FinanceAndHRComponents';
 
 // --- DUMMY/BUNDLED VERIFIABLE LICENSE PUBLIC KEY ---
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -1434,6 +1435,20 @@ export default function App() {
                       <span>Staff & Roles</span>
                     </button>
                   )}
+
+                  {hasPrivilege('finance.view') && (
+                    <button onClick={() => navigate('/finance')} className={`sidebar-link ${location.pathname.startsWith('/finance') ? 'active' : ''}`}>
+                      <DollarSign size={18} />
+                      <span>Finance</span>
+                    </button>
+                  )}
+
+                  {hasPrivilege('hr.staff.manage') && (
+                    <button onClick={() => navigate('/hr')} className={`sidebar-link ${location.pathname.startsWith('/hr') ? 'active' : ''}`}>
+                      <Briefcase size={18} />
+                      <span>HR Management</span>
+                    </button>
+                  )}
                 </nav>
 
                 <div className="sidebar-footer">
@@ -1950,6 +1965,16 @@ export default function App() {
                           )}
                         </div>
                       ) : <Navigate to="/" replace />
+                    } />
+
+                    {/* Finance view */}
+                    <Route path="/finance" element={
+                      hasPrivilege('finance.view') ? <FinanceDashboard /> : <Navigate to="/" replace />
+                    } />
+
+                    {/* HR view */}
+                    <Route path="/hr" element={
+                      hasPrivilege('hr.staff.manage') ? <HRDashboard /> : <Navigate to="/" replace />
                     } />
 
                     {/* Catch-all fallback */}

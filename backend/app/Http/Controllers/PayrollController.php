@@ -15,6 +15,15 @@ use Illuminate\Support\Facades\DB;
 class PayrollController extends Controller
 {
     /**
+     * GET /api/payroll-runs
+     */
+    public function index()
+    {
+        $runs = PayrollRun::with('lineItems.employee.user')->orderBy('generated_at', 'desc')->get();
+        return response()->json($runs);
+    }
+
+    /**
      * POST /api/payroll-runs
      * Generate a draft payroll run for a period.
      */

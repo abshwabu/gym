@@ -10,6 +10,15 @@ use Illuminate\Support\Carbon;
 class PaymentController extends Controller
 {
     /**
+     * GET /api/payments
+     */
+    public function index()
+    {
+        $payments = Payment::with('member')->orderBy('paid_at', 'desc')->get();
+        return response()->json($payments);
+    }
+
+    /**
      * POST /api/payments
      */
     public function store(Request $request)

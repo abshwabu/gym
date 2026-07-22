@@ -110,6 +110,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::patch('/invoices/{invoice}', [InvoiceController::class, 'update'])->middleware('privilege:finance.invoices.manage');
 
     // Finance Payments
+    Route::get('/payments', [PaymentController::class, 'index'])->middleware('privilege:finance.view');
     Route::post('/payments', [PaymentController::class, 'store'])->middleware('privilege:finance.payments.record');
     Route::post('/payments/bulk', [PaymentController::class, 'bulk'])->middleware('privilege:finance.payments.record');
 
@@ -146,6 +147,7 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::patch('/leave-requests/{id}/reject', [LeaveRequestController::class, 'reject'])->middleware('privilege:hr.leave.approve');
 
     // HR Payroll Runs
+    Route::get('/payroll-runs', [PayrollController::class, 'index'])->middleware('privilege:hr.payroll.manage');
     Route::post('/payroll-runs', [PayrollController::class, 'store'])->middleware('privilege:hr.payroll.manage');
     Route::patch('/payroll-runs/{id}/finalize', [PayrollController::class, 'finalize'])->middleware('privilege:hr.payroll.manage');
 });
