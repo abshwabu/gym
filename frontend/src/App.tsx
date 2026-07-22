@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, Activity, CreditCard, Clock, LogOut, CheckCircle, 
-  XCircle, RefreshCw, Plus, Search, UserPlus, Info
+  XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key
 } from 'lucide-react';
 import { db } from './db/gymDb';
 import { SyncManager } from './sync/syncManager';
@@ -19,6 +19,160 @@ const AuthGuard = ({ children }: { children: React.ReactNode }) => {
   }
 
   return <>{children}</>;
+};
+
+// --- REUSABLE PRIVILEGE CHECK WRAPPER ---
+export const RequirePrivilege = ({ 
+  privilege, 
+  children, 
+  fallback = null 
+}: { 
+  privilege: string; 
+  children: React.ReactNode; 
+  fallback?: React.ReactNode 
+}) => {
+  const privileges: string[] = JSON.parse(localStorage.getItem('user_privileges') || '[]');
+  const roles: string[] = JSON.parse(localStorage.getItem('user_roles') || '[]');
+  const isOwner = roles.includes('Owner') || roles.includes('Admin');
+
+  if (isOwner || privileges.includes(privilege)) {
+    return <>{children}</>;
+  }
+
+  return <>{fallback}</>;
+};
+
+// --- STAFF SIGNED INVITE ACTIVATION VIEW ---
+const AcceptInvite = () => {
+  const { userId } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const [password, setPassword] = useState('');
+  const [passwordConf, setPasswordConf] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Extract signed URL parameters
+  const queryParams = new URLSearchParams(location.search);
+  const expires = queryParams.get('expires');
+  const signature = queryParams.get('signature');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (!expires || !signature) {
+      setError('This activation link is invalid: missing signature.');
+      return;
+    }
+
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters long.');
+      return;
+    }
+
+    if (password !== passwordConf) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/staff/activate/${userId}?expires=${expires}&signature=${signature}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          password,
+          password_confirmation: passwordConf,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Activation failed.');
+      }
+
+      setSuccess(true);
+    } catch (err: any) {
+      setError(err.message || 'Failed to activate account. The link may have expired.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (success) {
+    return (
+      <div className="login-container">
+        <div className="login-card" style={{ textAlign: 'center' }}>
+          <div style={{ display: 'inline-flex', padding: '12px', borderRadius: '50%', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--status-active)', marginBottom: '16px' }}>
+            <CheckCircle size={36} />
+          </div>
+          <h1 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--text-primary)' }}>Account Activated</h1>
+          <p style={{ color: 'var(--text-muted)', margin: '12px 0 24px 0' }}>Your staff credentials have been successfully updated. You may now log in.</p>
+          <button onClick={() => navigate('/login')} className="btn btn-primary" style={{ width: '100%' }}>Go to Sign In</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="login-container">
+      <div className="login-card">
+        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+          <div style={{ display: 'inline-flex', padding: '12px', borderRadius: '16px', backgroundColor: 'rgba(139, 92, 246, 0.1)', color: 'var(--accent-purple)', marginBottom: '16px' }}>
+            <Key size={30} />
+          </div>
+          <h1 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--text-primary)' }}>Set Staff Password</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '8px' }}>Activate your account invitation</p>
+        </div>
+
+        {error && (
+          <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--status-inactive)', padding: '12px 16px', borderRadius: '10px', fontSize: '13px', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <XCircle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label className="form-label" htmlFor="pass">Choose Password</label>
+            <input
+              id="pass"
+              type="password"
+              className="form-input"
+              required
+              placeholder="Min 8 characters"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="pass-conf">Confirm Password</label>
+            <input
+              id="pass-conf"
+              type="password"
+              className="form-input"
+              required
+              placeholder="Retype password"
+              value={passwordConf}
+              onChange={e => setPasswordConf(e.target.value)}
+            />
+          </div>
+
+          <button type="submit" disabled={loading} className="btn btn-primary" style={{ width: '100%', height: '46px', marginTop: '16px' }}>
+            {loading ? 'Activating Account...' : 'Activate Account'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 };
 
 export default function App() {
@@ -67,6 +221,20 @@ export default function App() {
     freeze_allowance_days: '0',
     is_active: true,
   });
+
+  // Roles modal form
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [editingRole, setEditingRole] = useState<any>(null);
+  const [roleName, setRoleName] = useState('');
+  const [rolePrivileges, setRolePrivileges] = useState<string[]>([]);
+
+  // Staff invitation modal form
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ name: '', email: '', role_ids: [] as string[] });
+  const [generatedInviteUrl, setGeneratedInviteUrl] = useState('');
+
+  // Sub-tabs state inside Staff view
+  const [staffSubTab, setStaffSubTab] = useState<'directory' | 'roles'>('directory');
 
   // Search states
   const [checkinSearch, setCheckinSearch] = useState('');
@@ -183,6 +351,38 @@ export default function App() {
       return local.sort((a, b) => new Date(b.checked_in_at).getTime() - new Date(a.checked_in_at).getTime());
     },
     enabled: !!token,
+  });
+
+  // Query staff users (real-time only)
+  const { data: staff = [], refetch: refetchStaff } = useQuery({
+    queryKey: ['staff', token],
+    queryFn: async () => {
+      if (!isOnline || !token) return [];
+      const response = await fetch('/api/staff', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+      return [];
+    },
+    enabled: !!token && isOnline,
+  });
+
+  // Query roles (real-time only)
+  const { data: serverRoles = [], refetch: refetchServerRoles } = useQuery({
+    queryKey: ['server_roles', token],
+    queryFn: async () => {
+      if (!isOnline || !token) return [];
+      const response = await fetch('/api/roles', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+      return [];
+    },
+    enabled: !!token && isOnline,
   });
 
   const hasPrivilege = (priv: string) => privileges.includes(priv);
@@ -316,7 +516,7 @@ export default function App() {
   // Upsert Plan
   const handlePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const planId = crypto.randomUUID();
+    const planId = editingMember ? editingMember.id : crypto.randomUUID();
 
     const payload = {
       name: planForm.name,
@@ -340,6 +540,214 @@ export default function App() {
     }
   };
 
+  // Create/Edit Role
+  const handleRoleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !isOnline) return;
+
+    try {
+      let roleId = editingRole ? editingRole.id : null;
+
+      if (editingRole) {
+        // Edit existing Role Name
+        const resName = await fetch(`/api/roles/${roleId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Tenant-Slug': tenantSlug,
+          },
+          body: JSON.stringify({ name: roleName })
+        });
+        if (!resName.ok) throw new Error('Failed to update role name.');
+      } else {
+        // Create new role
+        const resCreate = await fetch('/api/roles', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Tenant-Slug': tenantSlug,
+          },
+          body: JSON.stringify({ name: roleName })
+        });
+        if (!resCreate.ok) throw new Error('Failed to create role.');
+        const newRole = await resCreate.json();
+        roleId = newRole.id;
+      }
+
+      // Sync Privileges checklist
+      const resPrivs = await fetch(`/api/roles/${roleId}/privileges`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Slug': tenantSlug,
+        },
+        body: JSON.stringify({ privilege_keys: rolePrivileges })
+      });
+
+      if (!resPrivs.ok) throw new Error('Failed to sync role permissions.');
+
+      showToast('Role configuration saved successfully.');
+      setShowRoleModal(false);
+      setEditingRole(null);
+      setRoleName('');
+      setRolePrivileges([]);
+      refetchServerRoles();
+    } catch (err: any) {
+      showToast(err.message || 'Error configuring role.', 'error');
+    }
+  };
+
+  // Delete Role
+  const handleDeleteRole = async (id: string) => {
+    if (!token || !isOnline) return;
+    if (!confirm('Are you sure you want to delete this role?')) return;
+
+    try {
+      const response = await fetch(`/api/roles/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'X-Tenant-Slug': tenantSlug,
+        }
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to delete role.');
+      }
+
+      showToast('Role deleted successfully.');
+      refetchServerRoles();
+    } catch (err: any) {
+      showToast(err.message || 'Error deleting role.', 'error');
+    }
+  };
+
+  // Invite Staff User
+  const handleInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !isOnline) return;
+
+    try {
+      const response = await fetch('/api/staff/invite', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Slug': tenantSlug,
+        },
+        body: JSON.stringify(inviteForm),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to invite staff.');
+      }
+
+      // Convert backend absolute API signed link to frontend routing path link
+      const serverUrl = new URL(data.activation_url);
+      const frontendActivationUrl = `${window.location.origin}/accept-invite/${data.user.id}${serverUrl.search}`;
+      
+      setGeneratedInviteUrl(frontendActivationUrl);
+      refetchStaff();
+      setInviteForm({ name: '', email: '', role_ids: [] });
+    } catch (err: any) {
+      showToast(err.message || 'Error sending invitation.', 'error');
+    }
+  };
+
+  // Resend signed invitation URL
+  const handleResendInvite = async (userId: string) => {
+    if (!token || !isOnline) return;
+
+    try {
+      const response = await fetch(`/api/staff/${userId}/resend`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'X-Tenant-Slug': tenantSlug,
+        }
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Failed to resend invite.');
+
+      const serverUrl = new URL(data.activation_url);
+      const frontendActivationUrl = `${window.location.origin}/accept-invite/${userId}${serverUrl.search}`;
+
+      setGeneratedInviteUrl(frontendActivationUrl);
+      showToast('New activation link generated.');
+    } catch (err: any) {
+      showToast(err.message || 'Error generating link.', 'error');
+    }
+  };
+
+  // Revoke staff invitation
+  const handleRevokeInvite = async (userId: string) => {
+    if (!token || !isOnline) return;
+    if (!confirm('Are you sure you want to revoke this invitation?')) return;
+
+    try {
+      const response = await fetch(`/api/staff/${userId}/revoke`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'X-Tenant-Slug': tenantSlug,
+        }
+      });
+
+      if (!response.ok) throw new Error('Failed to revoke invitation.');
+
+      showToast('Invitation revoked.');
+      refetchStaff();
+    } catch (err: any) {
+      showToast(err.message || 'Error revoking invitation.', 'error');
+    }
+  };
+
+  // Toggle staff Active / Disabled account status
+  const handleToggleStaff = async (userId: string) => {
+    if (!token || !isOnline) return;
+
+    try {
+      const response = await fetch(`/api/staff/${userId}/toggle`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'X-Tenant-Slug': tenantSlug,
+        }
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Failed to toggle account status.');
+
+      showToast(data.message);
+      refetchStaff();
+    } catch (err: any) {
+      showToast(err.message || 'Error changing staff status.', 'error');
+    }
+  };
+
+  // Helper toggle privilege key selection checklist
+  const togglePrivilegeKey = (key: string) => {
+    if (rolePrivileges.includes(key)) {
+      setRolePrivileges(rolePrivileges.filter(k => k !== key));
+    } else {
+      setRolePrivileges([...rolePrivileges, key]);
+    }
+  };
+
   // Filter members list by search keyword
   const filteredMembers = members.filter((m: any) => {
     const full = `${m.first_name} ${m.last_name}`.toLowerCase();
@@ -355,6 +763,24 @@ export default function App() {
         return m.status === 'Active' && (full.includes(checkinSearch.toLowerCase()) || (m.phone && m.phone.includes(checkinSearch)));
       }).slice(0, 5);
 
+  const privilegeList = [
+    { key: 'members.view', label: 'View Member Directory', category: 'Members' },
+    { key: 'members.create', label: 'Create New Members', category: 'Members' },
+    { key: 'members.update', label: 'Edit Member Profiles', category: 'Members' },
+    { key: 'plans.view', label: 'View Membership Plans', category: 'Plans' },
+    { key: 'plans.create', label: 'Create Billing Plans', category: 'Plans' },
+    { key: 'plans.update', label: 'Modify Billing Plans', category: 'Plans' },
+    { key: 'plans.delete', label: 'Soft Delete Billing Plans', category: 'Plans' },
+    { key: 'attendance.view', label: 'View Daily Check-ins', category: 'Attendance' },
+    { key: 'attendance.mark', label: 'Log Attendance Entries', category: 'Attendance' },
+    { key: 'roles.view', label: 'View Authorization Roles', category: 'Roles' },
+    { key: 'roles.create', label: 'Create Custom Roles', category: 'Roles' },
+    { key: 'roles.edit', label: 'Edit Roles & Privileges', category: 'Roles' },
+    { key: 'roles.delete', label: 'Delete Custom Roles', category: 'Roles' },
+    { key: 'staff.view', label: 'View Staff Directory', category: 'Staff' },
+    { key: 'staff.invite', label: 'Invite Staff Members', category: 'Staff' },
+  ];
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
       {/* Toast Alert popup */}
@@ -368,6 +794,9 @@ export default function App() {
       )}
 
       <Routes>
+        {/* Sign invite token route */}
+        <Route path="/accept-invite/:userId" element={<AcceptInvite />} />
+
         {/* Restrictive login route */}
         <Route path="/login" element={
           token ? <Navigate to="/" replace /> : (
@@ -472,6 +901,13 @@ export default function App() {
                     <button onClick={() => navigate('/attendance')} className={`sidebar-link ${location.pathname === '/attendance' ? 'active' : ''}`}>
                       <Clock size={18} />
                       <span>Check-ins</span>
+                    </button>
+                  )}
+
+                  {(hasPrivilege('staff.view') || hasPrivilege('roles.view')) && (
+                    <button onClick={() => navigate('/staff-roles')} className={`sidebar-link ${location.pathname === '/staff-roles' ? 'active' : ''}`}>
+                      <Shield size={18} />
+                      <span>Staff & Roles</span>
                     </button>
                   )}
                 </nav>
@@ -788,6 +1224,166 @@ export default function App() {
                       ) : <Navigate to="/" replace />
                     } />
 
+                    {/* Staff and Roles Management View */}
+                    <Route path="/staff-roles" element={
+                      (hasPrivilege('staff.view') || hasPrivilege('roles.view')) ? (
+                        <div>
+                          {/* Subtabs selector */}
+                          <div style={{ display: 'flex', gap: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '24px' }}>
+                            {hasPrivilege('staff.view') && (
+                              <button onClick={() => setStaffSubTab('directory')} className={`sidebar-link ${staffSubTab === 'directory' ? 'active' : ''}`} style={{ border: 'none', borderBottom: staffSubTab === 'directory' ? '2px solid var(--accent-purple)' : 'none', padding: '12px 16px', borderRadius: 0, cursor: 'pointer' }}>
+                                Staff Directory
+                              </button>
+                            )}
+                            {hasPrivilege('roles.view') && (
+                              <button onClick={() => setStaffSubTab('roles')} className={`sidebar-link ${staffSubTab === 'roles' ? 'active' : ''}`} style={{ border: 'none', borderBottom: staffSubTab === 'roles' ? '2px solid var(--accent-purple)' : 'none', padding: '12px 16px', borderRadius: 0, cursor: 'pointer' }}>
+                                Roles & Privileges
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Subtab 1: Staff Directory */}
+                          {staffSubTab === 'directory' && hasPrivilege('staff.view') && (
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
+                                {hasPrivilege('staff.invite') && (
+                                  <button onClick={() => { setGeneratedInviteUrl(''); setShowInviteModal(true); }} className="btn btn-primary">
+                                    <Plus size={18} />
+                                    <span>Invite Staff</span>
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="table-container">
+                                <table className="custom-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Name</th>
+                                      <th>Email</th>
+                                      <th>Assigned Roles</th>
+                                      <th>Status</th>
+                                      {hasPrivilege('staff.invite') && <th>Actions</th>}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {staff.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+                                          {isOnline ? 'No staff users found.' : 'Staff directory requires an online connection.'}
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      staff.map((member: any) => (
+                                        <tr key={member.id}>
+                                          <td style={{ fontWeight: '600' }}>{member.name}</td>
+                                          <td>{member.email}</td>
+                                          <td>{member.roles.map((r: any) => r.name).join(', ') || 'No Role'}</td>
+                                          <td>
+                                            <span className={`badge badge-${member.status === 'active' ? 'active' : member.status === 'invited' ? 'frozen' : 'inactive'}`}>
+                                              {member.status}
+                                            </span>
+                                          </td>
+                                          {hasPrivilege('staff.invite') && (
+                                            <td>
+                                              <div style={{ display: 'flex', gap: '8px' }}>
+                                                {member.status === 'invited' ? (
+                                                  <>
+                                                    <button onClick={() => handleResendInvite(member.id)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>Resend</button>
+                                                    <button onClick={() => handleRevokeInvite(member.id)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--status-inactive)' }}>Revoke</button>
+                                                  </>
+                                                ) : (
+                                                  <button onClick={() => handleToggleStaff(member.id)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+                                                    {member.status === 'active' ? 'Disable' : 'Enable'}
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </td>
+                                          )}
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Subtab 2: Roles and Permissions Gating */}
+                          {staffSubTab === 'roles' && hasPrivilege('roles.view') && (
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
+                                {hasPrivilege('roles.create') && (
+                                  <button onClick={() => { setEditingRole(null); setRoleName(''); setRolePrivileges([]); setShowRoleModal(true); }} className="btn btn-primary">
+                                    <Plus size={18} />
+                                    <span>Create Custom Role</span>
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="table-container">
+                                <table className="custom-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Role Name</th>
+                                      <th>Staff Assigned</th>
+                                      <th>Permissions Count</th>
+                                      {hasPrivilege('roles.edit') && <th>Actions</th>}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {serverRoles.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+                                          {isOnline ? 'No custom roles seeded.' : 'Roles management requires an online connection.'}
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      serverRoles.map((role: any) => (
+                                        <tr key={role.id}>
+                                          <td style={{ fontWeight: '600' }}>
+                                            {role.name} {role.is_system_role && <span style={{ fontSize: '10px', opacity: 0.6, verticalAlign: 'middle', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-tertiary)' }}>System</span>}
+                                          </td>
+                                          <td>{role.users_count !== undefined ? role.users_count : 0} staff</td>
+                                          <td>{role.is_system_role || role.name === 'Owner' ? 'All (SuperAdmin)' : `${role.privileges.length} keys`}</td>
+                                          {hasPrivilege('roles.edit') && (
+                                            <td>
+                                              <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button 
+                                                  onClick={() => {
+                                                    setEditingRole(role);
+                                                    setRoleName(role.name);
+                                                    setRolePrivileges(role.privileges.map((p: any) => p.key));
+                                                    setShowRoleModal(true);
+                                                  }} 
+                                                  className="btn btn-secondary" 
+                                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                                  disabled={role.is_system_role || role.name === 'Owner'}
+                                                >
+                                                  Edit Checklists
+                                                </button>
+                                                <button 
+                                                  onClick={() => handleDeleteRole(role.id)} 
+                                                  className="btn btn-secondary" 
+                                                  style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--status-inactive)' }}
+                                                  disabled={role.is_system_role || role.name === 'Owner'}
+                                                >
+                                                  Delete
+                                                </button>
+                                              </div>
+                                            </td>
+                                          )}
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : <Navigate to="/" replace />
+                    } />
+
                     {/* Catch-all fallback */}
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
@@ -880,6 +1476,116 @@ export default function App() {
                       <button type="submit" className="btn btn-primary">Create Plan</button>
                     </div>
                   </form>
+                </div>
+              </div>
+            )}
+
+            {/* Roles checklist Modal */}
+            {showRoleModal && (
+              <div className="modal-overlay">
+                <div className="modal-card" style={{ maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto' }}>
+                  <h3 className="modal-title">{editingRole ? `Configure privileges: ${editingRole.name}` : 'Create Custom Role'}</h3>
+                  <form onSubmit={handleRoleSubmit}>
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="role-title">Role Title</label>
+                      <input id="role-title" type="text" className="form-input" required placeholder="e.g. Trainer" value={roleName} onChange={e => setRoleName(e.target.value)} disabled={editingRole?.is_system_role} />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label" style={{ marginBottom: '12px' }}>Role Privileges checklist</label>
+                      
+                      {/* Privileges grouped by categories */}
+                      {Array.from(new Set(privilegeList.map(p => p.category))).map(category => (
+                        <div key={category} style={{ marginBottom: '20px' }}>
+                          <h4 style={{ fontSize: '13px', color: 'var(--accent-purple)', textTransform: 'uppercase', marginBottom: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
+                            {category}
+                          </h4>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                            {privilegeList.filter(p => p.category === category).map(priv => (
+                              <label key={priv.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={rolePrivileges.includes(priv.key)}
+                                  onChange={() => togglePrivilegeKey(priv.key)}
+                                  style={{ accentColor: 'var(--accent-purple)' }}
+                                />
+                                <span>{priv.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+                      <button type="button" onClick={() => { setShowRoleModal(false); setEditingRole(null); }} className="btn btn-secondary">Cancel</button>
+                      <button type="submit" className="btn btn-primary">Save Role Configuration</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Staff invitation / generated link Modal */}
+            {showInviteModal && (
+              <div className="modal-overlay">
+                <div className="modal-card">
+                  <h3 className="modal-title">Invite Staff Member</h3>
+
+                  {generatedInviteUrl ? (
+                    <div>
+                      <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--status-active)', padding: '16px', borderRadius: '12px', fontSize: '13px', marginBottom: '20px' }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Signed Link Generated!</div>
+                        <p>Copy and send this activation link to the invited staff member. It will expire in 3 days.</p>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="inv-url">Activation Link</label>
+                        <input id="inv-url" type="text" readOnly className="form-input" value={generatedInviteUrl} onClick={e => (e.target as HTMLInputElement).select()} />
+                      </div>
+
+                      <button onClick={() => { setShowInviteModal(false); setGeneratedInviteUrl(''); }} className="btn btn-primary" style={{ width: '100%' }}>Done</button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleInviteSubmit}>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="staff-name">Staff Name</label>
+                        <input id="staff-name" type="text" className="form-input" required placeholder="e.g. John Trainer" value={inviteForm.name} onChange={e => setInviteForm({ ...inviteForm, name: e.target.value })} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="staff-email">Email Address</label>
+                        <input id="staff-email" type="email" className="form-input" required placeholder="john@gym.com" value={inviteForm.email} onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })} />
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label" style={{ marginBottom: '8px' }}>Assign Roles</label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {serverRoles.map((role: any) => (
+                            <label key={role.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={inviteForm.role_ids.includes(role.id)}
+                                onChange={e => {
+                                  if (e.target.checked) {
+                                    setInviteForm({ ...inviteForm, role_ids: [...inviteForm.role_ids, role.id] });
+                                  } else {
+                                    setInviteForm({ ...inviteForm, role_ids: inviteForm.role_ids.filter(id => id !== role.id) });
+                                  }
+                                }}
+                                style={{ accentColor: 'var(--accent-purple)' }}
+                              />
+                              <span>{role.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+                        <button type="button" onClick={() => setShowInviteModal(false)} className="btn btn-secondary">Cancel</button>
+                        <button type="submit" className="btn btn-primary">Generate Invitation</button>
+                      </div>
+                    </form>
+                  )}
                 </div>
               </div>
             )}

@@ -13,7 +13,7 @@ class RoleController extends Controller
      */
     public function index()
     {
-        $roles = Role::with('privileges')->orderBy('name')->get();
+        $roles = Role::with('privileges')->withCount('users')->orderBy('name')->get();
         return response()->json($roles);
     }
 

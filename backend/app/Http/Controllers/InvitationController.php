@@ -11,6 +11,19 @@ use Illuminate\Support\Str;
 class InvitationController extends Controller
 {
     /**
+     * List all staff members (excluding tenant owner).
+     */
+    public function index()
+    {
+        $staff = User::with('roles')
+            ->where('is_tenant_owner', false)
+            ->orderBy('name')
+            ->get();
+
+        return response()->json($staff);
+    }
+
+    /**
      * Invite a new staff user.
      */
     public function invite(Request $request)
@@ -51,9 +64,63 @@ class InvitationController extends Controller
 
         return response()->json([
             'message' => 'Staff user invited successfully.',
-            'user' => $user,
+            'user' => $user->load('roles'),
             'activation_url' => $activationUrl,
         ], 201);
+    }
+
+    /**
+     * Resend an invite URL.
+     */
+    public function resend(User $user)
+    {
+        if ($user->status !== 'invited') {
+            return response()->json(['message' => 'Cannot resend: user is already active.'], 400);
+        }
+
+        $activationUrl = URL::temporarySignedRoute(
+            'invitation.activate',
+            now()->addDays(3),
+            ['user' => $user->id]
+        );
+
+        return response()->json([
+            'message' => 'New invitation link generated.',
+            'activation_url' => $activationUrl,
+        ]);
+    }
+
+    /**
+     * Revoke a pending invite.
+     */
+    public function revoke(User $user)
+    {
+        if ($user->status !== 'invited') {
+            return response()->json(['message' => 'Cannot revoke: user is already active.'], 400);
+        }
+
+        $user->roles()->detach();
+        $user->delete();
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Toggle staff status (enable/disable).
+     */
+    public function toggle(User $user)
+    {
+        if ($user->status === 'invited') {
+            return response()->json(['message' => 'User is pending activation.'], 400);
+        }
+
+        $newStatus = $user->status === 'active' ? 'disabled' : 'active';
+        $user->update(['status' => $newStatus]);
+
+        return response()->json([
+            'message' => "User status set to {$newStatus}.",
+            'user' => $user->load('roles'),
+        ]);
     }
 
     /**

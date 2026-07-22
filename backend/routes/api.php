@@ -23,8 +23,12 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
-    // Staff invitations
+    // Staff invitations & management
+    Route::get('/staff', [InvitationController::class, 'index'])->middleware('privilege:staff.view');
     Route::post('/staff/invite', [InvitationController::class, 'invite'])->middleware('privilege:staff.invite');
+    Route::post('/staff/{user}/resend', [InvitationController::class, 'resend'])->middleware('privilege:staff.invite');
+    Route::delete('/staff/{user}/revoke', [InvitationController::class, 'revoke'])->middleware('privilege:staff.invite');
+    Route::patch('/staff/{user}/toggle', [InvitationController::class, 'toggle'])->middleware('privilege:staff.invite');
 
     // Roles CRUD
     Route::get('/roles', [RoleController::class, 'index'])->middleware('privilege:roles.view');
