@@ -15,7 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'tenant' => \App\Http\Middleware\ResolveTenant::class,
-            'privilege' => \App\Http\Middleware\CheckPrivilege::class,
+            'privilege' => \App\Http\Middleware\HasPrivilege::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

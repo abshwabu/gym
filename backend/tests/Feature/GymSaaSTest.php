@@ -59,6 +59,7 @@ class GymSaaSTest extends TestCase
         $response = $this->postJson('/api/login', [
             'email' => 'admin@apex.com',
             'password' => 'password',
+            'tenant_slug' => 'apex',
         ]);
 
         $response->assertStatus(200)
@@ -76,7 +77,6 @@ class GymSaaSTest extends TestCase
 
     /**
      * Test tenant query isolation and parameter spoofing prevention.
-     * Proves a user from Tenant A cannot read or write a record belonging to Tenant B, even if they guess/forge the ID.
      */
     public function test_tenant_isolation_prevents_unauthorized_read_and_write(): void
     {
@@ -91,17 +91,13 @@ class GymSaaSTest extends TestCase
         TenantContext::clear();
 
         // 2. Authenticate as User A (Tenant A) and attempt to query Tenant B's member directly in DB
-        // The global scope should prevent retrieving it.
         $this->actingAs($this->userA);
-        
-        // Emulate web request middleware setting tenant context
         TenantContext::setTenant($this->tenantA);
 
         $member = Member::find($memberB->id);
         $this->assertNull($member, "User from Tenant A should not be able to read Tenant B's records");
 
         // 3. Attempt to write a member record and forge the tenant_id in request input
-        // Send a POST request to create a member, trying to specify tenant_id of Tenant B.
         $forgedMemberId = crypto_random_uuid_placeholder();
         $response = $this->postJson('/api/members', [
             'id' => $forgedMemberId,
@@ -113,12 +109,10 @@ class GymSaaSTest extends TestCase
 
         $response->assertStatus(201);
         
-        // Assert that the created member was forced to belong to Tenant A (User A's tenant),
-        // completely ignoring the forged input value in the request.
         $createdMember = Member::find($forgedMemberId);
         $this->assertNotNull($createdMember);
-        $this->assertEquals($this->tenantA->id, $createdMember->tenant_id, "Model creating event must force authenticated tenant ID");
-        $this->assertNotEquals($this->tenantB->id, $createdMember->tenant_id, "Tenant ID parameter injection must be rejected");
+        $this->assertEquals($this->tenantA->id, $createdMember->tenant_id);
+        $this->assertNotEquals($this->tenantB->id, $createdMember->tenant_id);
 
         TenantContext::clear();
     }
@@ -126,12 +120,11 @@ class GymSaaSTest extends TestCase
     /**
      * Test server-side privilege checking.
      */
-    public function test_privilege_authorization_middleware(): void
+    public function test_privilege_authorization_gating(): void
     {
-        // Apex has a staff user created in seeder with only Front Desk role (no plans.create privilege)
         $staff = User::where('email', 'staff@apex.com')->first();
 
-        // Staff user tries to create a plan (requires 'plans.create' or 'plans.manage')
+        // Staff user tries to create a plan (requires 'plans.create')
         $response = $this->actingAs($staff)
                          ->postJson('/api/plans', [
                              'id' => crypto_random_uuid_placeholder(),
@@ -140,7 +133,7 @@ class GymSaaSTest extends TestCase
                              'duration_days' => 30,
                          ]);
 
-        $response->assertStatus(403); // Forbidden
+        $response->assertStatus(403);
 
         // Owner/Admin user (User A) creates membership plan
         $response = $this->actingAs($this->userA)
@@ -152,19 +145,113 @@ class GymSaaSTest extends TestCase
                              'is_active' => true,
                          ]);
 
-        $response->assertStatus(201); // Created
+        $response->assertStatus(201);
+    }
+
+    /**
+     * Test (a): Prove that no public registration endpoint exists.
+     */
+    public function test_no_public_registration_route_exists(): void
+    {
+        $response = $this->postJson('/api/register', [
+            'name' => 'New User',
+            'email' => 'newuser@example.com',
+            'password' => 'password',
+        ]);
+
+        $response->assertStatus(404);
+    }
+
+    /**
+     * Test (b): Prove that a user without roles.create gets 403 on role endpoints.
+     */
+    public function test_user_without_roles_create_gets_403_on_role_endpoints(): void
+    {
+        $staff = User::where('email', 'staff@apex.com')->first();
+
+        // Attempt role CRUD - should be blocked (403)
+        $response = $this->actingAs($staff)
+                         ->postJson('/api/roles', [
+                             'name' => 'New Staff Role',
+                         ]);
+
+        $response->assertStatus(403);
+    }
+
+    /**
+     * Test (c): Prove that an invited user can only activate via a valid signed link (single-use).
+     */
+    public function test_invited_user_can_only_activate_via_valid_signed_link(): void
+    {
+        // 1. Authenticate as Tenant Admin (userA) to invite staff member
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $frontDeskRole = Role::where('tenant_id', $this->tenantA->id)->where('name', 'Front Desk')->first();
+
+        $response = $this->postJson('/api/staff/invite', [
+            'name' => 'Jane Invite',
+            'email' => 'jane.invite@apex.com',
+            'role_ids' => [$frontDeskRole->id],
+        ]);
+
+        $response->assertStatus(201);
+        $activationUrl = $response->json('activation_url');
+        $userId = $response->json('user.id');
+
+        $this->assertNotEmpty($activationUrl);
+
+        // Logout admin
+        $this->postJson('/api/logout');
+
+        // 2. Try to activate the account WITHOUT a signature or with a forged signature
+        $tamperedUrl = '/api/staff/activate/' . $userId . '?expires=' . time() . '&signature=badsignature';
+        $response = $this->postJson($tamperedUrl, [
+            'password' => 'newpassword123',
+            'password_confirmation' => 'newpassword123',
+        ]);
+
+        $response->assertStatus(403); // Forbidden due to invalid signed url
+
+        // 3. Activate the account WITH the valid signed activation link
+        // Extract the query parameters from the generated signed url
+        $queryParams = parse_url($activationUrl, PHP_URL_QUERY);
+        $activationPath = '/api/staff/activate/' . $userId . '?' . $queryParams;
+
+        $response = $this->postJson($activationPath, [
+            'password' => 'newpassword123',
+            'password_confirmation' => 'newpassword123',
+        ]);
+
+        $response->assertStatus(200)
+                 ->assertJson(['message' => 'Account activated successfully. You may now log in.']);
+
+        // Verify status changed to active in database
+        $user = User::find($userId);
+        $this->assertEquals('active', $user->status);
+
+        // 4. Test Single-Use: Attempting to call activation URL again should fail
+        $response = $this->postJson($activationPath, [
+            'password' => 'anotherpassword',
+            'password_confirmation' => 'anotherpassword',
+        ]);
+
+        $response->assertStatus(400) // Bad request because status is no longer 'invited'
+                 ->assertJson(['message' => 'This activation link is invalid or has already been used.']);
     }
 }
 
 // Simple helper to generate random UUID for tests
-function crypto_random_uuid_placeholder(): string
-{
-    return sprintf(
-        '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-        mt_rand(0, 0xffff),
-        mt_rand(0, 0x0fff) | 0x4000,
-        mt_rand(0, 0x3fff) | 0x8000,
-        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
-    );
+if (!function_exists('crypto_random_uuid_placeholder')) {
+    function crypto_random_uuid_placeholder(): string
+    {
+        return sprintf(
+            '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+            mt_rand(0, 0xffff),
+            mt_rand(0, 0x0fff) | 0x4000,
+            mt_rand(0, 0x3fff) | 0x8000,
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+        );
+    }
 }
