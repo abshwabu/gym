@@ -16,6 +16,14 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
+/**
+ * DatabaseSeeder
+ * 
+ * NOTE: The platform-level SuperAdminSeeder is excluded from the main array
+ * to prevent silent production deployment seeding of platform access credentials.
+ * To seed the super admin account explicitly, run:
+ *     php artisan db:seed --class=SuperAdminSeeder
+ */
 class DatabaseSeeder extends Seeder
 {
     /**

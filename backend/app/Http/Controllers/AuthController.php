@@ -23,18 +23,55 @@ class AuthController extends Controller
         $request->validate([
             'email' => 'required|email',
             'password' => 'required',
-            'tenant_slug' => 'required|string', // Resolved from ID/Slug login form field
+            'tenant_slug' => 'nullable|string', // Nullable for super admin login
         ]);
 
-        $slug = $request->input('tenant_slug');
+        $email = $request->input('email');
+        $password = $request->input('password');
+        $tenantSlug = $request->input('tenant_slug');
+
+        // 1. Attempt Super Admin lookup (tenant_id is null and is_super_admin = true)
+        $superAdmin = User::withoutGlobalScopes()
+            ->whereNull('tenant_id')
+            ->where('email', $email)
+            ->where('is_super_admin', true)
+            ->first();
+
+        if ($superAdmin && Hash::check($password, $superAdmin->password)) {
+            $token = $superAdmin->createToken('gym_auth_token')->plainTextToken;
+            return response()->json([
+                'token' => $token,
+                'user' => [
+                    'id' => $superAdmin->id,
+                    'name' => $superAdmin->name,
+                    'email' => $superAdmin->email,
+                    'is_super_admin' => true,
+                ],
+                'tenant' => null,
+                'roles' => ['Super Admin'],
+                'privileges' => ['platform.tenants.view', 'platform.tenants.create', 'platform.tenants.suspend'],
+            ]);
+        }
+
+        // 2. Otherwise, require tenant_slug and resolve tenant
+        if (!$tenantSlug) {
+            throw ValidationException::withMessages([
+                'tenant_slug' => ['The tenant slug field is required.'],
+            ]);
+        }
 
         // Resolve tenant by slug or UUID id
-        $tenant = Tenant::where('slug', $slug)
-            ->orWhere('id', $slug)
+        $tenant = Tenant::where('slug', $tenantSlug)
+            ->orWhere('id', $tenantSlug)
             ->first();
 
         if (!$tenant) {
             return response()->json(['message' => 'Tenant not found.'], 404);
+        }
+
+        // Check if tenant is suspended
+        if ($tenant->status === 'suspended') {
+            return response()->json(['message' => 'Your tenant account is suspended.'], 403);
         }
 
         // Check if tenant is active
@@ -42,10 +79,13 @@ class AuthController extends Controller
             return response()->json(['message' => 'Tenant account is ' . $tenant->status . '.'], 403);
         }
 
-        // Lookup user strictly belonging to this tenant
-        $user = User::where('tenant_id', $tenant->id)->where('email', $request->email)->first();
+        // Lookup user strictly belonging to this tenant (ignoring global scope temporarily if needed, or keeping it)
+        $user = User::withoutGlobalScopes()
+            ->where('tenant_id', $tenant->id)
+            ->where('email', $email)
+            ->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (!$user || !Hash::check($password, $user->password)) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -98,6 +138,21 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user();
+
+        if ($user->is_super_admin) {
+            return response()->json([
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'is_super_admin' => true,
+                ],
+                'tenant' => null,
+                'roles' => ['Super Admin'],
+                'privileges' => ['platform.tenants.view', 'platform.tenants.create', 'platform.tenants.suspend'],
+            ]);
+        }
+
         $user->load('roles.privileges', 'tenant');
 
         $privileges = [];

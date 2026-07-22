@@ -11,12 +11,22 @@ use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\RoleController;
+use App\Http\Controllers\PlatformController;
 
 // Unauthenticated routes
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/staff/activate/{user}', [InvitationController::class, 'activate'])
     ->name('invitation.activate')
     ->middleware('signed');
+
+// Platform-level Super Admin endpoints
+Route::middleware(['auth:sanctum', 'super_admin'])->prefix('platform')->group(function () {
+    Route::get('/tenants', [PlatformController::class, 'index']);
+    Route::post('/tenants', [PlatformController::class, 'store']);
+    Route::patch('/tenants/{id}/suspend', [PlatformController::class, 'suspend']);
+    Route::patch('/tenants/{id}/activate', [PlatformController::class, 'activate']);
+    Route::post('/tenants/{id}/reset-owner-password', [PlatformController::class, 'resetOwnerPassword']);
+});
 
 // Authenticated, tenant-scoped routes
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
