@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Attendance;
 use App\Models\Member;
+use App\Models\MemberPlan;
 use App\Models\Plan;
 use App\Models\SyncConflict;
 use Illuminate\Http\Request;

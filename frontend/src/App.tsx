@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, Activity, CreditCard, Clock, LogOut, CheckCircle, 
   XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key, User,
-  AlertTriangle, DollarSign, Briefcase
+  AlertTriangle, DollarSign, Briefcase, QrCode
 } from 'lucide-react';
 import { db } from './db/gymDb';
 import { SyncManager } from './sync/syncManager';
@@ -19,6 +19,19 @@ import { FinanceDashboard, HRDashboard } from './components/FinanceAndHRComponen
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G9a98...
 -----END PUBLIC KEY-----`;
+
+// --- SAFE UUID GENERATOR (Secure & Non-Secure Contexts) ---
+const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Math-based fallback for HTTP environments
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
 
 // --- OFFLINE LICENSE VALIDATION CHECKER ---
 const checkLicenseOffline = (): { valid: boolean; message: string } => {
@@ -292,6 +305,417 @@ const ImpersonationBanner = () => {
       >
         End Impersonation
       </button>
+    </div>
+  );
+};
+
+// --- SELF CHECK-IN KIOSK COMPONENT ---
+const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: { members: any[]; handleCheckin: (id: string, force?: boolean, isKiosk?: boolean) => Promise<any>; plans: any[]; localMemberPlans: any[] }) => {
+  const [scanInput, setScanInput] = useState('');
+  const [lastCheckedMember, setLastCheckedMember] = useState<any>(null);
+  const [kioskStatus, setKioskStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  const [libLoaded, setLibLoaded] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
+  const qrScannerRef = useRef<any>(null);
+
+  // Dynamically load html5-qrcode library from CDN
+  useEffect(() => {
+    if ((window as any).Html5QrCode) {
+      setLibLoaded(true);
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js";
+    script.async = true;
+    script.onload = () => {
+      setLibLoaded(true);
+    };
+    script.onerror = () => {
+      // Backup fallback to unpkg
+      const backupScript = document.createElement('script');
+      backupScript.src = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js";
+      backupScript.async = true;
+      backupScript.onload = () => setLibLoaded(true);
+      document.body.appendChild(backupScript);
+    };
+    document.body.appendChild(script);
+  }, []);
+
+  const startCamera = async () => {
+    if (!(window as any).Html5QrCode) {
+      alert("QR scanner library is still loading. Please wait a moment or check your internet connection.");
+      return;
+    }
+    
+    setCameraActive(true);
+    
+    // Allow React to mount/display the reader container first
+    setTimeout(async () => {
+      try {
+        if (qrScannerRef.current) {
+          await stopCamera();
+        }
+        
+        const scanner = new (window as any).Html5QrCode("kiosk-qr-reader");
+        qrScannerRef.current = scanner;
+        await scanner.start(
+          { facingMode: "user" },
+          { fps: 10, qrbox: 200 },
+          (decodedText: string) => {
+            processKioskCheckin(decodedText);
+            stopCamera();
+          },
+          () => {
+            // Silent frame read failures
+          }
+        );
+      } catch (err: any) {
+        console.error("Failed to start QR webcam scanner:", err);
+        const errorMsg = err.message || err;
+        let userMessage = `Camera error: ${errorMsg}.`;
+        
+        if (errorMsg.toString().includes('NotAllowedError') || errorMsg.toString().includes('NotFoundError') || !navigator.mediaDevices) {
+          userMessage += "\n\nIMPORTANT: Browsers block webcam access on non-secure connections. You must use 'localhost' or an 'https://' URL to use the camera. If you are accessing via a local network IP, it will not work.";
+        } else {
+          userMessage += " Please ensure webcam permissions are granted.";
+        }
+        
+        alert(userMessage);
+        setCameraActive(false);
+      }
+    }, 100);
+  };
+
+  const stopCamera = async () => {
+    if (qrScannerRef.current) {
+      try {
+        await qrScannerRef.current.stop();
+      } catch (e) {
+        console.error("Error stopping scanner:", e);
+      }
+      qrScannerRef.current = null;
+    }
+    setCameraActive(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (qrScannerRef.current) {
+        qrScannerRef.current.stop().catch(console.error);
+      }
+    };
+  }, []);
+
+  // Play scanner beep sound
+  const playBeep = (type: 'success' | 'error') => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.type = 'sine';
+      if (type === 'success') {
+        osc.frequency.setValueAtTime(880, ctx.currentTime); // High pitch beep
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
+      } else {
+        osc.frequency.setValueAtTime(220, ctx.currentTime); // Low buzz
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      }
+    } catch (e) {
+      console.error('Audio beep failed:', e);
+    }
+  };
+
+  const processKioskCheckin = async (memberId: string) => {
+    const trimmed = memberId.trim();
+    if (!trimmed) return;
+
+    const member = members.find((m: any) => m.id === trimmed);
+    if (!member) {
+      setKioskStatus('error');
+      setErrorMessage('Member pass not found. Please see front desk.');
+      playBeep('error');
+      setTimeout(() => {
+        setKioskStatus('idle');
+        setScanInput('');
+      }, 3000);
+      return;
+    }
+
+    if (!member.status || member.status.toLowerCase() !== 'active') {
+      setKioskStatus('error');
+      setErrorMessage(`Check-in rejected. Member account is ${member.status || 'Unknown'}.`);
+      playBeep('error');
+      setTimeout(() => {
+        setKioskStatus('idle');
+        setScanInput('');
+      }, 4000);
+      return;
+    }
+
+    // Call the check-in and inspect the result
+    const result = await handleCheckin(member.id, false, true);
+    
+    if (result && result.success) {
+      // Find their plan name to display
+      const activeSub = localMemberPlans.find((p: any) => p.member_id === member.id && p.status?.toLowerCase() === 'active');
+      const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
+      
+      setLastCheckedMember({
+        ...member,
+        active_plan: activeSub ? { ...activeSub, plan } : null
+      });
+      setKioskStatus('success');
+      playBeep('success');
+      
+      setTimeout(() => {
+        setKioskStatus('idle');
+        setScanInput('');
+      }, 4000);
+    } else {
+      setKioskStatus('error');
+      const reasons: Record<string, string> = {
+        'no_plan': 'No active membership plan found.',
+        'frozen': 'Your membership plan is frozen. Please see front desk.',
+        'expired': 'Your membership plan is expired. Please renew.',
+        'over_limit': 'Check-in limit reached for this session card.',
+      };
+      setErrorMessage(reasons[result?.reason || ''] || 'Check-in failed. Please see front desk.');
+      playBeep('error');
+      setTimeout(() => {
+        setKioskStatus('idle');
+        setScanInput('');
+      }, 4000);
+    }
+  };
+
+  // Listen to manual typing or barcode scanner entries (standard enter key submission)
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    processKioskCheckin(scanInput);
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: '75vh',
+      backgroundColor: '#0b0f19',
+      color: '#f8fafc',
+      borderRadius: '24px',
+      padding: '40px',
+      textAlign: 'center',
+      boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+      border: '1px solid #1f2937',
+      position: 'relative',
+      overflow: 'hidden'
+    }}>
+      {/* Laser line animation */}
+      {kioskStatus === 'idle' && (
+        <div style={{
+          position: 'absolute',
+          top: '30%',
+          left: 0,
+          right: 0,
+          height: '2px',
+          backgroundColor: '#0d9488',
+          boxShadow: '0 0 10px #0d9488, 0 0 20px #0d9488',
+          animation: 'laserPulse 2.5s infinite ease-in-out'
+        }} />
+      )}
+
+      <style>{`
+        @keyframes laserPulse {
+          0% { top: 25%; opacity: 0.2; }
+          50% { top: 65%; opacity: 1; }
+          100% { top: 25%; opacity: 0.2; }
+        }
+      `}</style>
+
+      {kioskStatus === 'idle' && (
+        <div style={{ maxWidth: '500px', width: '100%', zIndex: 2 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '2px', color: 'var(--accent-color)', backgroundColor: 'rgba(13, 148, 136, 0.1)', padding: '4px 12px', borderRadius: '20px' }}>
+              Self-Checkin Terminal
+            </span>
+          </div>
+          <h1 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '8px', letterSpacing: '-0.5px' }}>Scan Member Pass</h1>
+          <p style={{ color: '#94a3b8', fontSize: '15px', marginBottom: '32px' }}>
+            Hold your mobile pass or QR card key in front of the scanner.
+          </p>
+
+          {/* Scanner Simulation box */}
+          <div style={{
+            border: '2px dashed #374151',
+            borderRadius: '20px',
+            padding: '40px 20px',
+            backgroundColor: 'rgba(17, 24, 39, 0.5)',
+            marginBottom: '32px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center'
+          }}>
+            {/* Real Webcam Stream container or fallback visual box */}
+            <div style={{ 
+              width: '280px', 
+              height: '210px', 
+              border: cameraActive ? '2px solid #10b981' : '2px solid #0d9488', 
+              borderRadius: '16px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              position: 'relative', 
+              backgroundColor: '#000', 
+              marginBottom: '24px',
+              overflow: 'hidden',
+              boxShadow: cameraActive ? '0 0 15px rgba(16,185,129,0.3)' : 'none'
+            }}>
+              <div id="kiosk-qr-reader" style={{ width: '100%', height: '100%', display: cameraActive ? 'block' : 'none' }} />
+              
+              {!cameraActive && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ position: 'absolute', top: '10px', left: '10px', width: '16px', height: '16px', borderTop: '4px solid #0d9488', borderLeft: '4px solid #0d9488' }} />
+                  <div style={{ position: 'absolute', top: '10px', right: '10px', width: '16px', height: '16px', borderTop: '4px solid #0d9488', borderRight: '4px solid #0d9488' }} />
+                  <div style={{ position: 'absolute', bottom: '10px', left: '10px', width: '16px', height: '16px', borderBottom: '4px solid #0d9488', borderLeft: '4px solid #0d9488' }} />
+                  <div style={{ position: 'absolute', bottom: '10px', right: '10px', width: '16px', height: '16px', borderBottom: '4px solid #0d9488', borderRight: '4px solid #0d9488' }} />
+                  <span style={{ fontSize: '13px', color: '#6b7280', fontWeight: '500' }}>Webcam Off</span>
+                </div>
+              )}
+            </div>
+
+            {/* Webcam activation buttons */}
+            {libLoaded ? (
+              <div style={{ marginBottom: '24px' }}>
+                {!cameraActive ? (
+                  <button 
+                    onClick={startCamera} 
+                    className="btn btn-primary"
+                    style={{ padding: '8px 24px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span>Start Webcam Scanner</span>
+                  </button>
+                ) : (
+                  <button 
+                    onClick={stopCamera} 
+                    className="btn btn-secondary"
+                    style={{ padding: '8px 24px', fontSize: '13px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                  >
+                    <span>Stop Camera</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '24px' }}>
+                Loading QR scanning module...
+              </div>
+            )}
+
+            {/* Test Simulation dropdown & controls */}
+            <div style={{ width: '100%', maxWidth: '360px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Kiosk Testing Tool</div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <select 
+                  className="form-select" 
+                  style={{ flex: 1, height: '38px', fontSize: '13px', backgroundColor: '#1f2937', color: '#fff', borderColor: '#374151' }}
+                  onChange={e => setScanInput(e.target.value)}
+                  value={scanInput}
+                >
+                  <option value="">-- Choose Member to Scan --</option>
+                  {members.map((m: any) => (
+                    <option key={m.id} value={m.id}>{m.first_name} {m.last_name} ({m.status})</option>
+                  ))}
+                </select>
+                <button 
+                  onClick={() => processKioskCheckin(scanInput)}
+                  className="btn btn-primary"
+                  style={{ padding: '0 16px', fontSize: '13px', height: '38px' }}
+                  disabled={!scanInput}
+                >
+                  Simulate QR Scan
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Or paste Member ID manually..."
+                  value={scanInput}
+                  onChange={e => setScanInput(e.target.value)}
+                  style={{ flex: 1, height: '38px', fontSize: '13px', backgroundColor: '#111827' }}
+                />
+                <button type="submit" className="btn btn-secondary" style={{ padding: '0 16px', fontSize: '13px', height: '38px' }}>
+                  Submit
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#6b7280', cursor: 'pointer' }}>
+              <input type="checkbox" checked={soundEnabled} onChange={e => setSoundEnabled(e.target.checked)} />
+              <span>Chime Audio Beeps</span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {kioskStatus === 'success' && lastCheckedMember && (
+        <div style={{ zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', animation: 'scaleUp 0.3s ease' }}>
+          <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', border: '3px solid #10b981' }}>
+            <svg style={{ width: '40px', height: '40px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 style={{ fontSize: '36px', fontWeight: '800', color: '#10b981', marginBottom: '8px' }}>Welcome, {lastCheckedMember.first_name}!</h2>
+          <p style={{ color: '#94a3b8', fontSize: '16px', marginBottom: '24px' }}>Check-in logged successfully.</p>
+          
+          <div style={{ padding: '20px 40px', backgroundColor: 'rgba(17, 24, 39, 0.6)', border: '1px solid #374151', borderRadius: '16px', minWidth: '300px' }}>
+            <div style={{ fontSize: '12px', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px' }}>Membership Plan</div>
+            <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#f8fafc' }}>
+              {lastCheckedMember.active_plan?.plan?.name || 'Active Plan'}
+            </div>
+            <span className="badge badge-active" style={{ marginTop: '8px', display: 'inline-block' }}>Access Granted</span>
+          </div>
+        </div>
+      )}
+
+      {kioskStatus === 'error' && (
+        <div style={{ zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', animation: 'scaleUp 0.3s ease' }}>
+          <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', border: '3px solid #ef4444' }}>
+            <svg style={{ width: '40px', height: '40px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+          <h2 style={{ fontSize: '36px', fontWeight: '800', color: '#ef4444', marginBottom: '8px' }}>Access Denied</h2>
+          <p style={{ color: '#fca5a5', fontSize: '18px', fontWeight: '600' }}>{errorMessage}</p>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes scaleUp {
+          from { transform: scale(0.9); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 };
@@ -873,42 +1297,42 @@ export default function App() {
   };
 
   // Log Check-in (Optimistic UI)
-  const handleCheckin = async (memberId: string, force = false) => {
+  const handleCheckin = async (memberId: string, force = false, isKiosk = false) => {
     const member = members.find((m: any) => m.id === memberId);
-    if (!member) return;
+    if (!member) return { success: false, reason: 'not_found' };
 
     // Get active subscription
-    const activeSub = localMemberPlans.find((p: any) => p.member_id === memberId && p.status === 'active');
+    const activeSub = localMemberPlans.find((p: any) => p.member_id === memberId && p.status?.toLowerCase() === 'active');
     const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
 
     // Run checkin warnings
     if (!force) {
       if (!activeSub) {
-        setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
-        return;
+        if (!isKiosk) setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
+        return { success: false, reason: 'no_plan' };
       }
       if (activeSub.status === 'frozen') {
-        setAdvisoryWarning({ member, plan, type: 'frozen' });
-        return;
+        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'frozen' });
+        return { success: false, reason: 'frozen' };
       }
       if (new Date(activeSub.expires_at) < new Date()) {
-        setAdvisoryWarning({ member, plan, type: 'expired' });
-        return;
+        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'expired' });
+        return { success: false, reason: 'expired' };
       }
       if (plan && plan.session_limit !== null && activeSub.sessions_used >= plan.session_limit) {
-        setAdvisoryWarning({ member, plan, type: 'over_limit' });
-        return;
+        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'over_limit' });
+        return { success: false, reason: 'over_limit' };
       }
     }
 
-    const attendanceId = crypto.randomUUID();
+    const attendanceId = generateUUID();
     const checked_in_at = new Date().toISOString();
     const payload = {
       id: attendanceId,
       member_id: memberId,
       member_plan_id: activeSub ? activeSub.id : null,
       checked_in_at,
-      method: 'kiosk',
+      method: isKiosk ? 'kiosk' : 'front_desk',
     };
 
     try {
@@ -924,18 +1348,20 @@ export default function App() {
 
       queryClient.invalidateQueries({ queryKey: ['attendances'] });
       queryClient.invalidateQueries({ queryKey: ['members'] });
-      showToast(`Successfully checked in ${member.first_name}!`);
+      if (!isKiosk) showToast(`Successfully checked in ${member.first_name}!`);
       setCheckinSearch('');
       setAdvisoryWarning(null);
+      return { success: true };
     } catch (e) {
-      showToast('Error recording check-in.', 'error');
+      if (!isKiosk) showToast('Error recording check-in.', 'error');
+      return { success: false, reason: 'error' };
     }
   };
 
   // Upsert Member
   const handleMemberSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const memberId = editingMember ? editingMember.id : crypto.randomUUID();
+    const memberId = editingMember ? editingMember.id : generateUUID();
     const action = editingMember ? 'update' : 'create';
 
     const payload = {
@@ -961,7 +1387,7 @@ export default function App() {
   // Upsert Plan
   const handlePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const planId = crypto.randomUUID();
+    const planId = generateUUID();
 
     const payload = {
       name: planForm.name,
@@ -990,7 +1416,7 @@ export default function App() {
     e.preventDefault();
     if (!selectedMemberProfile) return;
 
-    const subId = crypto.randomUUID();
+    const subId = generateUUID();
     const plan = plans.find((p: any) => p.id === assignPlanForm.plan_id);
     if (!plan) return;
 
@@ -1566,6 +1992,13 @@ export default function App() {
                     </button>
                   )}
 
+                  {hasPrivilege('attendance.mark') && (
+                    <button onClick={() => navigate('/kiosk')} className={`sidebar-link ${location.pathname === '/kiosk' ? 'active' : ''}`}>
+                      <QrCode size={18} />
+                      <span>Self-Checkin Kiosk</span>
+                    </button>
+                  )}
+
                   {(hasPrivilege('staff.view') || hasPrivilege('roles.view')) && (
                     <button onClick={() => navigate('/staff-roles')} className={`sidebar-link ${location.pathname === '/staff-roles' ? 'active' : ''}`}>
                       <Shield size={18} />
@@ -1987,6 +2420,18 @@ export default function App() {
                             </table>
                           </div>
                         </div>
+                      ) : <Navigate to="/" replace />
+                    } />
+
+                    {/* Self Check-in Kiosk View */}
+                    <Route path="/kiosk" element={
+                      hasPrivilege('attendance.mark') ? (
+                        <SelfCheckinKiosk 
+                          members={members} 
+                          handleCheckin={handleCheckin} 
+                          plans={plans}
+                          localMemberPlans={localMemberPlans}
+                        />
                       ) : <Navigate to="/" replace />
                     } />
 
