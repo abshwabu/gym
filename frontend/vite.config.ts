@@ -11,23 +11,8 @@ export default defineConfig({
       injectRegister: 'auto',
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        // Stale-While-Revalidate caching strategy for API requests
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'api-cache',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 24 * 60 * 60 * 7 // 7 days
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
-          }
-        ]
+        // Removed Stale-While-Revalidate caching strategy for API requests as SyncManager handles offline DB manually
+        // and Workbox intercepts and breaks POST/PATCH requests.
       },
       manifest: {
         name: 'Apex Gym Management SaaS',
