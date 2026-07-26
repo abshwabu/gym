@@ -144,12 +144,32 @@ export class SyncManager {
     if (this.syncInProgress) return false;
     if (!navigator.onLine) return false;
 
-    const pendingItems = await db.outbox
+    // Include pending and previously failed conflict items for re-sync attempt
+    const rawPendingItems = await db.outbox
       .where('status')
-      .equals('pending')
+      .anyOf(['pending', 'conflict'])
       .sortBy('localId');
 
-    if (pendingItems.length === 0) return true;
+    if (rawPendingItems.length === 0) return true;
+
+    // Sort items strictly by entity dependency hierarchy
+    const entityPriority: Record<string, number> = {
+      'plans': 1,
+      'members': 2,
+      'member_plans': 3,
+      'invoices': 4,
+      'expenses': 5,
+      'payments': 6,
+      'attendances': 7,
+      'staff_attendance': 8,
+    };
+
+    const pendingItems = rawPendingItems.sort((a, b) => {
+      const pA = entityPriority[a.entity] || 99;
+      const pB = entityPriority[b.entity] || 99;
+      if (pA !== pB) return pA - pB;
+      return (a.localId || 0) - (b.localId || 0);
+    });
 
     this.syncInProgress = true;
 
@@ -290,7 +310,12 @@ export class SyncManager {
         // 2. Individual endpoint uploads for editable entities
         let path = '';
         let method = 'POST';
-        const body = { ...currentItem.payload, id: currentItem.clientUuid, updated_at: currentItem.createdAt };
+        const body = { 
+          ...currentItem.payload, 
+          id: currentItem.clientUuid, 
+          client_uuid: currentItem.clientUuid, 
+          updated_at: currentItem.createdAt 
+        };
 
         if (currentItem.entity === 'members') {
           path = '/members';

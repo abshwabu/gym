@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Carbon;
 use App\Services\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -36,7 +37,7 @@ class ResolveTenant
                         ->where('status', 'active')
                         ->first();
 
-                    if (!$activeLicense || Carbon\Carbon::now()->greaterThan($activeLicense->expires_at)) {
+                    if (!$activeLicense || Carbon::now()->greaterThan($activeLicense->expires_at)) {
                         if ($activeLicense && $activeLicense->status === 'active') {
                             $activeLicense->update(['status' => 'expired']);
                         }
