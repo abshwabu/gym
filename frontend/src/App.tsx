@@ -276,6 +276,8 @@ const ImpersonationBanner = () => {
       console.error(e);
     }
 
+    await SyncManager.clearAllCaches();
+
     localStorage.setItem('gym_auth_token', superAdminToken);
     localStorage.removeItem('super_admin_token');
     localStorage.removeItem('is_impersonating');

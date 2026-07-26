@@ -388,6 +388,25 @@ export class SyncManager {
   }
 
   /**
+   * Clear all IndexedDB cache tables and reset sync timestamp.
+   */
+  public static async clearAllCaches() {
+    localStorage.removeItem('last_sync_timestamp');
+    try {
+      await db.cache_members.clear();
+      await db.cache_plans.clear();
+      await db.cache_member_plans.clear();
+      await db.cache_attendances.clear();
+      await db.cache_invoices.clear();
+      await db.cache_payments.clear();
+      await db.cache_expenses.clear();
+      await db.cache_staff_attendance.clear();
+    } catch (e) {
+      console.error('Failed to clear cache tables:', e);
+    }
+  }
+
+  /**
    * Perform pull-based delta synchronization.
    */
   public static async pullFreshCaches(token: string) {
@@ -399,6 +418,14 @@ export class SyncManager {
       const { status, data } = await this.apiRequest(`/sync/changes?since=${encodeURIComponent(since)}`, 'GET', null, token);
 
       if (status === 200 && data) {
+        if (!since) {
+          // Full sync reset: clear cached tables so stale data from previous tenants/sessions is wiped
+          await db.cache_members.clear();
+          await db.cache_plans.clear();
+          await db.cache_member_plans.clear();
+          await db.cache_attendances.clear();
+        }
+
         if (data.members && data.members.length > 0) {
           await db.cache_members.bulkPut(data.members);
         }

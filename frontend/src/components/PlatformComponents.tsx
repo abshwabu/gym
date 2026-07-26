@@ -5,6 +5,7 @@ import {
   XCircle, RefreshCw, Key, 
   AlertTriangle, Play 
 } from 'lucide-react';
+import { SyncManager } from '../sync/syncManager';
 
 // Common headers for Platform Admin requests
 const getHeaders = () => {
@@ -385,6 +386,9 @@ export const PlatformTenantDetails = () => {
       if (res.ok) {
         const data = await res.json();
         
+        // Clear local caches to ensure fresh resync for impersonated tenant
+        await SyncManager.clearAllCaches();
+
         // Stash Super Admin token and set impersonation session info
         localStorage.setItem('super_admin_token', localStorage.getItem('gym_auth_token') || '');
         localStorage.setItem('gym_auth_token', data.token);
