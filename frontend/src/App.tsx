@@ -258,6 +258,20 @@ const ImpersonationBanner = () => {
         },
         body: JSON.stringify({ impersonation_log_id: logId })
       });
+
+      const meRes = await fetch('/api/auth/me', {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${superAdminToken}`
+        }
+      });
+
+      if (meRes.ok) {
+        const meData = await meRes.json();
+        localStorage.setItem('user_info', JSON.stringify(meData.user));
+        localStorage.setItem('user_roles', JSON.stringify(meData.roles || ['Super Admin']));
+        localStorage.setItem('user_privileges', JSON.stringify(meData.privileges || []));
+      }
     } catch (e) {
       console.error(e);
     }
@@ -267,6 +281,7 @@ const ImpersonationBanner = () => {
     localStorage.removeItem('is_impersonating');
     localStorage.removeItem('impersonation_tenant_name');
     localStorage.removeItem('impersonation_log_id');
+    localStorage.removeItem('tenant_slug');
 
     window.location.href = '/platform/tenants';
   };

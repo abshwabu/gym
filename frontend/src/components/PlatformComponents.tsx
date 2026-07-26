@@ -388,6 +388,10 @@ export const PlatformTenantDetails = () => {
         // Stash Super Admin token and set impersonation session info
         localStorage.setItem('super_admin_token', localStorage.getItem('gym_auth_token') || '');
         localStorage.setItem('gym_auth_token', data.token);
+        localStorage.setItem('tenant_slug', data.tenant ? data.tenant.slug : tenant.slug);
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+        localStorage.setItem('user_roles', JSON.stringify(data.roles || ['Owner']));
+        localStorage.setItem('user_privileges', JSON.stringify(data.privileges || []));
         localStorage.setItem('is_impersonating', 'true');
         localStorage.setItem('impersonation_tenant_name', tenant.name);
         localStorage.setItem('impersonation_log_id', data.impersonation_log_id);

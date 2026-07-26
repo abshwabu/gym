@@ -318,6 +318,9 @@ class PlatformController extends Controller
             'reason' => $request->reason,
         ]);
 
+        // Extract full privileges for the owner user
+        $privileges = \App\Models\Privilege::pluck('key')->toArray();
+
         return response()->json([
             'token' => $token,
             'user' => [
@@ -326,6 +329,8 @@ class PlatformController extends Controller
                 'email' => $owner->email,
             ],
             'tenant' => $tenant,
+            'roles' => ['Owner'],
+            'privileges' => array_values($privileges),
             'impersonation_log_id' => $log->id,
         ]);
     }
