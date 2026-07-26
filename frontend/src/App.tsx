@@ -8,6 +8,7 @@ import {
   AlertTriangle, DollarSign, Briefcase, QrCode
 } from 'lucide-react';
 import { db } from './db/gymDb';
+import { Html5Qrcode } from 'html5-qrcode';
 import { SyncManager } from './sync/syncManager';
 import { 
   PlatformTenants, PlatformTenantDetails, 
@@ -317,40 +318,10 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
   const [errorMessage, setErrorMessage] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  const [libLoaded, setLibLoaded] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
-  const qrScannerRef = useRef<any>(null);
-
-  // Dynamically load html5-qrcode library from CDN
-  useEffect(() => {
-    if ((window as any).Html5QrCode) {
-      setLibLoaded(true);
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js";
-    script.async = true;
-    script.onload = () => {
-      setLibLoaded(true);
-    };
-    script.onerror = () => {
-      // Backup fallback to unpkg
-      const backupScript = document.createElement('script');
-      backupScript.src = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js";
-      backupScript.async = true;
-      backupScript.onload = () => setLibLoaded(true);
-      document.body.appendChild(backupScript);
-    };
-    document.body.appendChild(script);
-  }, []);
+  const qrScannerRef = useRef<Html5Qrcode | null>(null);
 
   const startCamera = async () => {
-    if (!(window as any).Html5QrCode) {
-      alert("QR scanner library is still loading. Please wait a moment or check your internet connection.");
-      return;
-    }
-    
     setCameraActive(true);
     
     // Allow React to mount/display the reader container first
@@ -360,19 +331,30 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
           await stopCamera();
         }
         
-        const scanner = new (window as any).Html5QrCode("kiosk-qr-reader");
+        const scanner = new Html5Qrcode("kiosk-qr-reader");
         qrScannerRef.current = scanner;
-        await scanner.start(
-          { facingMode: "user" },
-          { fps: 10, qrbox: 200 },
-          (decodedText: string) => {
-            processKioskCheckin(decodedText);
-            stopCamera();
-          },
-          () => {
-            // Silent frame read failures
+
+        const qrCodeSuccessCallback = (decodedText: string) => {
+          processKioskCheckin(decodedText);
+          stopCamera();
+        };
+
+        const config = { 
+          fps: 15, 
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            return {
+              width: Math.floor(minEdge * 0.8),
+              height: Math.floor(minEdge * 0.8)
+            };
           }
-        );
+        };
+
+        try {
+          await scanner.start({ facingMode: "environment" }, config, qrCodeSuccessCallback, () => {});
+        } catch (e) {
+          await scanner.start({ facingMode: "user" }, config, qrCodeSuccessCallback, () => {});
+        }
       } catch (err: any) {
         console.error("Failed to start QR webcam scanner:", err);
         const errorMsg = err.message || err;
@@ -439,14 +421,29 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
     }
   };
 
-  const processKioskCheckin = async (memberId: string) => {
-    const trimmed = memberId.trim();
-    if (!trimmed) return;
+  const processKioskCheckin = async (rawInput: string) => {
+    const input = rawInput.trim();
+    if (!input) return;
 
-    const member = members.find((m: any) => m.id === trimmed);
+    // Extract UUID if input is a URL, JSON payload, or formatted string
+    const uuidRegex = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+    const match = input.match(uuidRegex);
+    const targetId = match ? match[0] : input;
+
+    // Smart lookup: 1) Exact UUID, 2) Short ID prefix (e.g. first 8 chars), 3) Email, 4) Phone
+    const member = members.find((m: any) => {
+      const mId = (m.id || '').toLowerCase();
+      const tId = targetId.toLowerCase();
+      if (mId === tId) return true;
+      if (tId.length >= 4 && mId.startsWith(tId)) return true;
+      if (m.email && m.email.toLowerCase() === tId) return true;
+      if (m.phone && m.phone.replace(/\D/g, '') === tId.replace(/\D/g, '')) return true;
+      return false;
+    });
+
     if (!member) {
       setKioskStatus('error');
-      setErrorMessage('Member pass not found. Please see front desk.');
+      setErrorMessage('Member pass not found. Please verify Member ID or see front desk.');
       playBeep('error');
       setTimeout(() => {
         setKioskStatus('idle');
@@ -455,9 +452,10 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
       return;
     }
 
-    if (!member.status || member.status.toLowerCase() !== 'active') {
+    const isInactive = member.status && ['inactive', 'frozen', 'suspended', 'cancelled'].includes(member.status.toLowerCase());
+    if (isInactive) {
       setKioskStatus('error');
-      setErrorMessage(`Check-in rejected. Member account is ${member.status || 'Unknown'}.`);
+      setErrorMessage(`Check-in rejected. Member account is ${member.status}.`);
       playBeep('error');
       setTimeout(() => {
         setKioskStatus('idle');
@@ -471,8 +469,13 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
     
     if (result && result.success) {
       // Find their plan name to display
-      const activeSub = localMemberPlans.find((p: any) => p.member_id === member.id && p.status?.toLowerCase() === 'active');
-      const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
+      const mAny = member as any;
+      const activeSub = localMemberPlans.find((p: any) => p.member_id === member.id && p.status?.toLowerCase() === 'active')
+        || (mAny.active_member_plan ? { ...mAny.active_member_plan, plan_id: mAny.active_member_plan.plan_id || mAny.active_member_plan.plan?.id } : null)
+        || (mAny.activeMemberPlan ? { ...mAny.activeMemberPlan, plan_id: mAny.activeMemberPlan.plan_id || mAny.activeMemberPlan.plan?.id } : null)
+        || (mAny.active_plan ? { ...mAny.active_plan, plan_id: mAny.active_plan.plan_id || mAny.active_plan.plan?.id } : null);
+
+      const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) || activeSub.plan : null;
       
       setLastCheckedMember({
         ...member,
@@ -599,34 +602,28 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
             </div>
 
             {/* Webcam activation buttons */}
-            {libLoaded ? (
-              <div style={{ marginBottom: '24px' }}>
-                {!cameraActive ? (
-                  <button 
-                    onClick={startCamera} 
-                    className="btn btn-primary"
-                    style={{ padding: '8px 24px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}
-                  >
-                    <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    <span>Start Webcam Scanner</span>
-                  </button>
-                ) : (
-                  <button 
-                    onClick={stopCamera} 
-                    className="btn btn-secondary"
-                    style={{ padding: '8px 24px', fontSize: '13px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-                  >
-                    <span>Stop Camera</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '24px' }}>
-                Loading QR scanning module...
-              </div>
-            )}
+            <div style={{ marginBottom: '24px' }}>
+              {!cameraActive ? (
+                <button 
+                  onClick={startCamera} 
+                  className="btn btn-primary"
+                  style={{ padding: '8px 24px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                  <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  <span>Start Webcam Scanner</span>
+                </button>
+              ) : (
+                <button 
+                  onClick={stopCamera} 
+                  className="btn btn-secondary"
+                  style={{ padding: '8px 24px', fontSize: '13px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                >
+                  <span>Stop Camera</span>
+                </button>
+              )}
+            </div>
 
             {/* Test Simulation dropdown & controls */}
             <div style={{ width: '100%', maxWidth: '360px' }}>
@@ -1302,26 +1299,34 @@ export default function App() {
     if (!member) return { success: false, reason: 'not_found' };
 
     // Get active subscription
-    const activeSub = localMemberPlans.find((p: any) => p.member_id === memberId && p.status?.toLowerCase() === 'active');
-    const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
+    const mAny = member as any;
+    const activeSub = localMemberPlans.find((p: any) => p.member_id === memberId && p.status?.toLowerCase() === 'active')
+      || (mAny.active_member_plan ? { ...mAny.active_member_plan, plan_id: mAny.active_member_plan.plan_id || mAny.active_member_plan.plan?.id } : null)
+      || (mAny.activeMemberPlan ? { ...mAny.activeMemberPlan, plan_id: mAny.activeMemberPlan.plan_id || mAny.activeMemberPlan.plan?.id } : null)
+      || (mAny.active_plan ? { ...mAny.active_plan, plan_id: mAny.active_plan.plan_id || mAny.active_plan.plan?.id } : null);
+
+    const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) || activeSub.plan : null;
 
     // Run checkin warnings
     if (!force) {
       if (!activeSub) {
-        if (!isKiosk) setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
-        return { success: false, reason: 'no_plan' };
-      }
-      if (activeSub.status === 'frozen') {
-        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'frozen' });
-        return { success: false, reason: 'frozen' };
-      }
-      if (new Date(activeSub.expires_at) < new Date()) {
-        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'expired' });
-        return { success: false, reason: 'expired' };
-      }
-      if (plan && plan.session_limit !== null && activeSub.sessions_used >= plan.session_limit) {
-        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'over_limit' });
-        return { success: false, reason: 'over_limit' };
+        if (member.status?.toLowerCase() !== 'active') {
+          if (!isKiosk) setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
+          return { success: false, reason: 'no_plan' };
+        }
+      } else {
+        if (activeSub.status?.toLowerCase() === 'frozen') {
+          if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'frozen' });
+          return { success: false, reason: 'frozen' };
+        }
+        if (activeSub.expires_at && new Date(activeSub.expires_at) < new Date()) {
+          if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'expired' });
+          return { success: false, reason: 'expired' };
+        }
+        if (plan && plan.session_limit !== null && (activeSub.sessions_used || 0) >= plan.session_limit) {
+          if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'over_limit' });
+          return { success: false, reason: 'over_limit' };
+        }
       }
     }
 
@@ -1374,6 +1379,32 @@ export default function App() {
 
     try {
       await SyncManager.queueWrite('members', action, memberId, payload);
+
+      if (!editingMember && memberForm.membership_plan_id) {
+        const plan = plans.find((p: any) => p.id === memberForm.membership_plan_id);
+        if (plan) {
+          const subId = generateUUID();
+          const starts = new Date();
+          let expires = new Date(starts);
+          if (plan.billing_cycle === 'weekly') expires.setDate(starts.getDate() + 7);
+          else if (plan.billing_cycle === 'monthly') expires.setMonth(starts.getMonth() + 1);
+          else if (plan.billing_cycle === 'quarterly') expires.setMonth(starts.getMonth() + 3);
+          else if (plan.billing_cycle === 'annual') expires.setFullYear(starts.getFullYear() + 1);
+          else if (plan.billing_cycle === 'custom_days' && plan.custom_cycle_days) expires.setDate(starts.getDate() + plan.custom_cycle_days);
+          else expires.setFullYear(starts.getFullYear() + 10);
+
+          const planPayload = {
+            member_id: memberId,
+            plan_id: plan.id,
+            starts_at: starts.toISOString(),
+            expires_at: expires.toISOString(),
+            status: 'active',
+            sessions_used: 0,
+          };
+          await SyncManager.queueWrite('member_plans', 'create', subId, planPayload);
+        }
+      }
+
       queryClient.invalidateQueries({ queryKey: ['members'] });
       showToast(editingMember ? 'Member profile updated.' : 'Member registered successfully.');
       setShowMemberModal(false);
