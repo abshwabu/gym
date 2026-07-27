@@ -81,8 +81,14 @@ class InvitationController extends Controller
             $backendUrl
         );
 
+        try {
+            \Illuminate\Support\Facades\Mail::to($user->email)->send(new \App\Mail\StaffInvitationMail($activationUrl, $user->name));
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Failed sending staff invitation email: ' . $e->getMessage());
+        }
+
         return response()->json([
-            'message' => 'Staff user invited successfully.',
+            'message' => 'Staff user invited successfully. Invitation email sent.',
             'user' => $user->load('roles'),
             'activation_url' => $activationUrl,
         ], 201);
@@ -110,8 +116,14 @@ class InvitationController extends Controller
             $backendUrl
         );
 
+        try {
+            \Illuminate\Support\Facades\Mail::to($user->email)->send(new \App\Mail\StaffInvitationMail($activationUrl, $user->name));
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Failed resending staff invitation email: ' . $e->getMessage());
+        }
+
         return response()->json([
-            'message' => 'New invitation link generated.',
+            'message' => 'New invitation link generated and email sent.',
             'activation_url' => $activationUrl,
         ]);
     }
