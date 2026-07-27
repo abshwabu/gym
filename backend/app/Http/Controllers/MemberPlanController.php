@@ -55,14 +55,18 @@ class MemberPlanController extends Controller
             ? Carbon::parse($request->input('expires_at'))
             : $this->calculateExpiryDate($plan, $startsAt);
 
+        $clientUuid = $request->input('client_uuid') ?: $request->input('id');
+
         $memberPlan = MemberPlan::create([
+            'id' => $clientUuid ?: (string) \Illuminate\Support\Str::uuid(),
+            'tenant_id' => \App\Services\TenantContext::getTenantId(),
             'member_id' => $member->id,
             'plan_id' => $plan->id,
             'starts_at' => $startsAt,
             'expires_at' => $expiresAt,
             'status' => 'active',
             'sessions_used' => 0,
-            'client_uuid' => $request->input('client_uuid'),
+            'client_uuid' => $clientUuid,
         ]);
 
         return response()->json($memberPlan->load('plan'), 201);

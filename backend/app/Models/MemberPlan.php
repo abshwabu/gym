@@ -35,6 +35,7 @@ class MemberPlan extends Model
     }
 
     protected $fillable = [
+        'id',
         'tenant_id',
         'member_id',
         'plan_id',

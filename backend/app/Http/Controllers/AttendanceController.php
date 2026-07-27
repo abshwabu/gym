@@ -40,9 +40,9 @@ class AttendanceController extends Controller
         $request->validate([
             'id' => 'required|uuid',
             'member_id' => 'required|uuid|exists:members,id',
-            'member_plan_id' => 'nullable|uuid|exists:member_plans,id',
+            'member_plan_id' => 'nullable|uuid',
             'checked_in_at' => 'required|date',
-            'method' => 'nullable|string|in:manual,qr_scan,kiosk',
+            'method' => 'nullable|string|in:manual,qr_scan,kiosk,front_desk',
             'from_offline' => 'nullable|boolean',
         ]);
 
@@ -50,7 +50,8 @@ class AttendanceController extends Controller
         $memberId = $request->input('member_id');
         $memberPlanId = $request->input('member_plan_id');
         $checkedInAt = Carbon::parse($request->input('checked_in_at'));
-        $method = $request->input('method', 'manual');
+        $rawMethod = $request->input('method', 'manual');
+        $method = in_array($rawMethod, ['manual', 'qr_scan', 'kiosk']) ? $rawMethod : 'manual';
         $fromOffline = $request->input('from_offline', false);
 
         // 1. Idempotency Check
@@ -64,7 +65,7 @@ class AttendanceController extends Controller
         // 2. Resolve target MemberPlan subscription
         // If not specified, look up their current active plan
         $memberPlan = $memberPlanId 
-            ? MemberPlan::find($memberPlanId) 
+            ? (MemberPlan::find($memberPlanId) ?: MemberPlan::where('client_uuid', $memberPlanId)->first()) 
             : $member->activeMemberPlan()->first();
 
         // 3. Advisory Check for Expired / Cancelled Subscriptions
@@ -117,9 +118,9 @@ class AttendanceController extends Controller
             'attendances' => 'required|array',
             'attendances.*.id' => 'required|uuid',
             'attendances.*.member_id' => 'required|uuid|exists:members,id',
-            'attendances.*.member_plan_id' => 'nullable|uuid|exists:member_plans,id',
+            'attendances.*.member_plan_id' => 'nullable|uuid',
             'attendances.*.checked_in_at' => 'required|date',
-            'attendances.*.method' => 'nullable|string|in:manual,qr_scan,kiosk',
+            'attendances.*.method' => 'nullable|string|in:manual,qr_scan,kiosk,front_desk',
         ]);
 
         $batch = $request->input('attendances');
@@ -132,7 +133,8 @@ class AttendanceController extends Controller
                 $memberId = $item['member_id'];
                 $memberPlanId = $item['member_plan_id'] ?? null;
                 $checkedInAt = Carbon::parse($item['checked_in_at']);
-                $method = $item['method'] ?? 'manual';
+                $rawMethod = $item['method'] ?? 'manual';
+                $method = in_array($rawMethod, ['manual', 'qr_scan', 'kiosk']) ? $rawMethod : 'manual';
 
                 // Check duplicate
                 $existing = Attendance::find($id);
@@ -157,7 +159,7 @@ class AttendanceController extends Controller
                 }
 
                 $memberPlan = $memberPlanId 
-                    ? MemberPlan::find($memberPlanId) 
+                    ? (MemberPlan::find($memberPlanId) ?: MemberPlan::where('client_uuid', $memberPlanId)->first()) 
                     : $member->activeMemberPlan()->first();
 
                 // Advisory check: we always allow creations from offline sync

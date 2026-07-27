@@ -1354,7 +1354,7 @@ export default function App() {
       member_id: memberId,
       member_plan_id: activeSub ? activeSub.id : null,
       checked_in_at,
-      method: isKiosk ? 'kiosk' : 'front_desk',
+      method: isKiosk ? 'kiosk' : 'manual',
     };
 
     try {
