@@ -1239,7 +1239,10 @@ export default function App() {
     enabled: !!token && isOnline,
   });
 
-  const hasPrivilege = (priv: string) => privileges.includes(priv);
+  const hasPrivilege = (priv: string) => {
+    if (user?.is_super_admin || roles.includes('Owner') || roles.includes('Super Admin')) return true;
+    return privileges.includes(priv) || privileges.includes('*');
+  };
 
   // Authenticate login
   const handleLogin = async (e: React.FormEvent) => {
@@ -2664,14 +2667,14 @@ export default function App() {
                                                   onClick={() => {
                                                     setEditingRole(role);
                                                     setRoleName(role.name);
-                                                    setRolePrivileges(role.privileges.map((p: any) => p.key));
+                                                    setRolePrivileges(role.privileges ? role.privileges.map((p: any) => p.key) : []);
                                                     setShowRoleModal(true);
                                                   }} 
                                                   className="btn btn-secondary" 
                                                   style={{ padding: '6px 12px', fontSize: '12px' }}
-                                                  disabled={role.is_system_role || role.name === 'Owner'}
+                                                  disabled={role.name === 'Owner'}
                                                 >
-                                                  Edit Checklists
+                                                  Edit Role & Privileges
                                                 </button>
                                                 <button 
                                                   onClick={() => handleDeleteRole(role.id)} 
