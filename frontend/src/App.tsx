@@ -1766,6 +1766,69 @@ export default function App() {
     }
   };
 
+  // Resend signed invitation URL
+  const handleResendInvite = async (userId: string) => {
+    if (!token || !isOnline) return;
+
+    try {
+      const response = await fetch(`/api/staff/${userId}/resend`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'X-Tenant-Slug': tenantSlug,
+        }
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Failed to resend invite.');
+
+      const serverUrl = new URL(data.activation_url);
+      const frontendActivationUrl = `${window.location.origin}/accept-invite/${userId}${serverUrl.search}`;
+
+      setGeneratedInviteUrl(frontendActivationUrl);
+      showToast('New invitation link generated.');
+    } catch (err: any) {
+      showToast(err.message || 'Error generating link.', 'error');
+    }
+  };
+
+  // Update Staff Member Details & Roles
+  const handleStaffUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStaff || !token || !isOnline) return;
+
+    try {
+      const res = await fetch(`/api/staff/${editingStaff.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-Slug': tenantSlug,
+        },
+        body: JSON.stringify({
+          name: inviteForm.name,
+          email: inviteForm.email,
+          role_ids: inviteForm.role_ids,
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        showToast('Staff member updated successfully.');
+        setShowInviteModal(false);
+        setEditingStaff(null);
+        setInviteForm({ name: '', email: '', role_ids: [] });
+        refetchStaff();
+      } else {
+        showToast(data.message || 'Failed to update staff member.', 'error');
+      }
+    } catch (e) {
+      showToast('Error updating staff member.', 'error');
+    }
+  };
+
   // Revoke staff invitation
   const handleRevokeInvite = async (userId: string) => {
     if (!token || !isOnline) return;
