@@ -1033,6 +1033,7 @@ export default function App() {
 
   // Staff invitation modal form
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [editingStaff, setEditingStaff] = useState<any>(null);
   const [inviteForm, setInviteForm] = useState({ name: '', email: '', role_ids: [] as string[] });
   const [generatedInviteUrl, setGeneratedInviteUrl] = useState('');
 
@@ -1765,33 +1766,6 @@ export default function App() {
     }
   };
 
-  // Resend signed invitation URL
-  const handleResendInvite = async (userId: string) => {
-    if (!token || !isOnline) return;
-
-    try {
-      const response = await fetch(`/api/staff/${userId}/resend`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
-          'X-Tenant-Slug': tenantSlug,
-        }
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Failed to resend invite.');
-
-      const serverUrl = new URL(data.activation_url);
-      const frontendActivationUrl = `${window.location.origin}/accept-invite/${userId}${serverUrl.search}`;
-
-      setGeneratedInviteUrl(frontendActivationUrl);
-      showToast('New invitation link generated.');
-    } catch (err: any) {
-      showToast(err.message || 'Error generating link.', 'error');
-    }
-  };
-
   // Revoke staff invitation
   const handleRevokeInvite = async (userId: string) => {
     if (!token || !isOnline) return;
@@ -2506,7 +2480,7 @@ export default function App() {
                             <div>
                               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
                                 {hasPrivilege('staff.invite') && (
-                                  <button onClick={() => { setGeneratedInviteUrl(''); setShowInviteModal(true); }} className="btn btn-primary">
+                                  <button onClick={() => { setEditingStaff(null); setInviteForm({ name: '', email: '', role_ids: [] }); setGeneratedInviteUrl(''); setShowInviteModal(true); }} className="btn btn-primary">
                                     <Plus size={18} />
                                     <span>Invite Staff</span>
                                   </button>
@@ -2545,6 +2519,22 @@ export default function App() {
                                           {hasPrivilege('staff.invite') && (
                                             <td>
                                               <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button
+                                                  onClick={() => {
+                                                    setEditingStaff(member);
+                                                    setInviteForm({
+                                                      name: member.name,
+                                                      email: member.email,
+                                                      role_ids: member.roles ? member.roles.map((r: any) => r.id) : [],
+                                                    });
+                                                    setGeneratedInviteUrl('');
+                                                    setShowInviteModal(true);
+                                                  }}
+                                                  className="btn btn-secondary"
+                                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                                >
+                                                  Edit
+                                                </button>
                                                 {member.status === 'invited' ? (
                                                   <>
                                                     <button onClick={() => handleResendInvite(member.id)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>Resend</button>
@@ -2955,11 +2945,11 @@ export default function App() {
               </div>
             )}
 
-            {/* Staff invitation / generated link Modal */}
+            {/* Staff invitation / editing Modal */}
             {showInviteModal && (
               <div className="modal-overlay">
                 <div className="modal-card">
-                  <h3 className="modal-title">Invite Staff Member</h3>
+                  <h3 className="modal-title">{editingStaff ? 'Edit Staff Member' : 'Invite Staff Member'}</h3>
 
                   {generatedInviteUrl ? (
                     <div>
@@ -2973,10 +2963,10 @@ export default function App() {
                         <input id="inv-url" type="text" readOnly className="form-input" value={generatedInviteUrl} onClick={e => (e.target as HTMLInputElement).select()} />
                       </div>
 
-                      <button onClick={() => { setShowInviteModal(false); setGeneratedInviteUrl(''); }} className="btn btn-primary" style={{ width: '100%' }}>Done</button>
+                      <button onClick={() => { setShowInviteModal(false); setGeneratedInviteUrl(''); setEditingStaff(null); }} className="btn btn-primary" style={{ width: '100%' }}>Done</button>
                     </div>
                   ) : (
-                    <form onSubmit={handleInviteSubmit}>
+                    <form onSubmit={editingStaff ? handleStaffUpdate : handleInviteSubmit}>
                       <div className="form-group">
                         <label className="form-label" htmlFor="staff-name">Staff Name</label>
                         <input id="staff-name" type="text" className="form-input" required placeholder="e.g. John Trainer" value={inviteForm.name} onChange={e => setInviteForm({ ...inviteForm, name: e.target.value })} />
@@ -3010,8 +3000,8 @@ export default function App() {
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
-                        <button type="button" onClick={() => setShowInviteModal(false)} className="btn btn-secondary">Cancel</button>
-                        <button type="submit" className="btn btn-primary">Generate Invitation</button>
+                        <button type="button" onClick={() => { setShowInviteModal(false); setEditingStaff(null); }} className="btn btn-secondary">Cancel</button>
+                        <button type="submit" className="btn btn-primary">{editingStaff ? 'Save Changes' : 'Generate Invitation'}</button>
                       </div>
                     </form>
                   )}

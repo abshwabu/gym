@@ -144,6 +144,45 @@ class InvitationController extends Controller
     }
 
     /**
+     * Update an existing staff member.
+     */
+    public function update(Request $request, User $user)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email',
+            'role_ids' => 'nullable|array',
+            'role_ids.*' => 'required|uuid|exists:roles,id',
+        ]);
+
+        $tenantId = TenantContext::getTenantId();
+
+        // Check email uniqueness excluding current user
+        $existing = User::where('tenant_id', $tenantId)
+            ->where('email', $request->email)
+            ->where('id', '!=', $user->id)
+            ->first();
+
+        if ($existing) {
+            return response()->json(['message' => 'Another user with this email already exists in your tenant.'], 422);
+        }
+
+        $user->update([
+            'name' => $request->name,
+            'email' => $request->email,
+        ]);
+
+        if ($request->has('role_ids')) {
+            $user->roles()->sync($request->role_ids);
+        }
+
+        return response()->json([
+            'message' => 'Staff user updated successfully.',
+            'user' => $user->load('roles'),
+        ]);
+    }
+
+    /**
      * Toggle staff status (enable/disable).
      */
     public function toggle(User $user)
