@@ -31,6 +31,27 @@ class EmployeeProfile extends Model
         'salary_amount' => 'decimal:2',
     ];
 
+    /**
+     * Next sequential employee code for the current tenant (e.g. EMP-101, EMP-102).
+     * Starts at EMP-101 when no numeric EMP-* codes exist yet.
+     */
+    public static function generateEmployeeCode(): string
+    {
+        $max = 100;
+
+        $codes = static::query()
+            ->where('employee_code', 'like', 'EMP-%')
+            ->pluck('employee_code');
+
+        foreach ($codes as $code) {
+            if (preg_match('/^EMP-(\d+)$/', (string) $code, $matches)) {
+                $max = max($max, (int) $matches[1]);
+            }
+        }
+
+        return 'EMP-' . ($max + 1);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

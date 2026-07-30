@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+/*
+| SPA catch-all — React Router handles client routes.
+| API routes live under /api and are registered separately.
+*/
+Route::view('/{any?}', 'spa')->where('any', '.*');

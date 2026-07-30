@@ -588,7 +588,7 @@ export const HRDashboard = () => {
   const [showPayrollModal, setShowPayrollModal] = useState(false);
 
   // Forms
-  const [employeeForm, setEmployeeForm] = useState({ user_id: '', employee_code: '', hire_date: '', employment_type: 'full_time', salary_amount: '', salary_cycle: 'monthly' });
+  const [employeeForm, setEmployeeForm] = useState({ user_id: '', hire_date: '', employment_type: 'full_time', salary_amount: '', salary_cycle: 'monthly' });
   const [shiftForm, setShiftForm] = useState({ employee_id: '', shift_date: '', start_time: '09:00:00', end_time: '17:00:00' });
   const [leaveForm, setLeaveForm] = useState({ employee_id: '', type: 'vacation', start_date: '', end_date: '', reason: '' });
   const [payrollForm, setPayrollForm] = useState({ period_start: '', period_end: '' });
@@ -628,7 +628,7 @@ export const HRDashboard = () => {
     const res = await apiRequest('/api/employees', 'POST', payload);
     if (res.status === 201) {
       setShowEmployeeModal(false);
-      setEmployeeForm({ user_id: '', employee_code: '', hire_date: '', employment_type: 'full_time', salary_amount: '', salary_cycle: 'monthly' });
+      setEmployeeForm({ user_id: '', hire_date: '', employment_type: 'full_time', salary_amount: '', salary_cycle: 'monthly' });
       loadData();
     }
   };
@@ -943,10 +943,6 @@ export const HRDashboard = () => {
                     <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                   ))}
                 </select>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Employee Code</label>
-                <input type="text" required className="form-input" placeholder="e.g. EMP-101" value={employeeForm.employee_code} onChange={e => setEmployeeForm({ ...employeeForm, employee_code: e.target.value })} />
               </div>
               <div className="form-group">
                 <label className="form-label">Hire Date</label>

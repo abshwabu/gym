@@ -246,4 +246,41 @@ class HRTest extends TestCase
             'amount' => 2500.00,
         ]);
     }
+
+    /**
+     * Employee codes are generated server-side (EMP-101, EMP-102, ...).
+     */
+    public function test_employee_code_is_auto_generated_on_create(): void
+    {
+        $response = $this->actingAs($this->user)
+            ->postJson('/api/employees', [
+                'user_id' => $this->salariedUser->id,
+                'hire_date' => '2026-01-15',
+                'employment_type' => 'full_time',
+                'salary_amount' => 2500,
+                'salary_cycle' => 'monthly',
+            ]);
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('employee_code', 'EMP-101');
+        $this->assertDatabaseHas('employee_profiles', [
+            'user_id' => $this->salariedUser->id,
+            'employee_code' => 'EMP-101',
+        ]);
+
+        // Client-provided employee_code is ignored; next sequential code is used.
+        $response2 = $this->actingAs($this->user)
+            ->postJson('/api/employees', [
+                'user_id' => $this->hourlyUser->id,
+                'employee_code' => 'CLIENT-CODE',
+                'hire_date' => '2026-02-01',
+                'employment_type' => 'part_time',
+                'salary_amount' => 18,
+                'salary_cycle' => 'hourly',
+            ]);
+
+        $response2->assertStatus(201);
+        $response2->assertJsonPath('employee_code', 'EMP-102');
+        $this->assertNotEquals('CLIENT-CODE', $response2->json('employee_code'));
+    }
 }

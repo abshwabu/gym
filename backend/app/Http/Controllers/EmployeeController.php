@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\EmployeeProfile;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -24,7 +25,6 @@ class EmployeeController extends Controller
     {
         $request->validate([
             'user_id' => 'required|uuid|exists:users,id|unique:employee_profiles,user_id',
-            'employee_code' => 'required|string|max:100',
             'hire_date' => 'required|date',
             'employment_type' => 'required|string|in:full_time,part_time,contract',
             'salary_amount' => 'required|numeric|min:0',
@@ -33,22 +33,18 @@ class EmployeeController extends Controller
             'status' => 'nullable|string|in:active,on_leave,terminated',
         ]);
 
-        // Assert employee_code uniqueness within tenant
-        $existsCode = EmployeeProfile::where('employee_code', $request->input('employee_code'))->exists();
-        if ($existsCode) {
-            return response()->json(['message' => 'Employee code is already in use.'], 422);
-        }
-
-        $employee = EmployeeProfile::create([
+        $attributes = [
             'user_id' => $request->input('user_id'),
-            'employee_code' => $request->input('employee_code'),
             'hire_date' => $request->input('hire_date'),
             'employment_type' => $request->input('employment_type'),
             'salary_amount' => $request->input('salary_amount'),
             'salary_currency' => $request->input('salary_currency', 'USD'),
             'salary_cycle' => $request->input('salary_cycle'),
             'status' => $request->input('status', 'active'),
-        ]);
+        ];
+
+        // Always generate server-side; ignore any client-provided employee_code.
+        $employee = $this->createWithUniqueEmployeeCode($attributes);
 
         return response()->json($employee->load('user'), 201);
     }
@@ -78,5 +74,36 @@ class EmployeeController extends Controller
         );
 
         return response()->json($employee->load('user'));
+    }
+
+    /**
+     * Create an employee profile, retrying on rare employee_code collisions.
+     */
+    private function createWithUniqueEmployeeCode(array $attributes): EmployeeProfile
+    {
+        $attempts = 0;
+
+        while ($attempts < 5) {
+            $attempts++;
+            $attributes['employee_code'] = EmployeeProfile::generateEmployeeCode();
+
+            try {
+                return EmployeeProfile::create($attributes);
+            } catch (QueryException $e) {
+                if (! $this->isUniqueConstraintViolation($e) || $attempts >= 5) {
+                    throw $e;
+                }
+            }
+        }
+
+        throw new \RuntimeException('Unable to generate a unique employee code.');
+    }
+
+    private function isUniqueConstraintViolation(QueryException $e): bool
+    {
+        // SQLSTATE 23000 = integrity constraint violation (MySQL/SQLite/Postgres variants)
+        return $e->errorInfo[0] === '23000'
+            || str_contains(strtolower($e->getMessage()), 'unique')
+            || str_contains(strtolower($e->getMessage()), 'duplicate');
     }
 }

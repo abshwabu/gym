@@ -87,7 +87,7 @@ class PlatformController extends Controller
             ['user' => $owner->id]
         );
 
-        $frontendHost = env('FRONTEND_URL', 'http://localhost:5173');
+        $frontendHost = rtrim((string) env('FRONTEND_URL', config('app.url')), '/');
         $activationUrl = str_replace(
             url('/api/staff/activate'),
             $frontendHost . '/accept-invite',
@@ -149,7 +149,7 @@ class PlatformController extends Controller
             ['user' => $owner->id]
         );
 
-        $frontendHost = env('FRONTEND_URL', 'http://localhost:5173');
+        $frontendHost = rtrim((string) env('FRONTEND_URL', config('app.url')), '/');
         $activationUrl = str_replace(
             url('/api/staff/activate'),
             $frontendHost . '/accept-invite',
