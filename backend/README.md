@@ -16,12 +16,12 @@ npm install
 composer run dev
 ```
 
-`composer run dev` starts **artisan serve** (port 8000), the queue worker, log tail, and Vite HMR together.
+`composer run dev` starts **artisan serve** (port 8000), the queue worker, log tail, and Vite HMR together. Vite also opens the app in your browser at **APP_URL** (`http://localhost:8000`).
 
-**Open the app at:** [http://localhost:8000](http://localhost:8000)  
+**Use the app at:** [http://localhost:8000](http://localhost:8000)  
 Example: [http://localhost:8000/hr](http://localhost:8000/hr)
 
-Do **not** open `http://localhost:5173` in the browser. That is Vite’s HMR-only server; visiting it shows Laravel Vite’s placeholder page (“This is the Vite development server…”). Laravel serves the SPA via `spa.blade.php` + `@vite`, and Vite only hot-reloads assets.
+Port **5173** is Vite’s HMR server only. If you open e.g. `http://localhost:5173/hr`, it **302-redirects** to `http://localhost:8000/hr` (path preserved). Laravel serves the SPA via `spa.blade.php` + `@vite`; Vite hot-reloads assets.
 
 API calls use relative `/api` paths (same origin).
 
@@ -35,7 +35,7 @@ php artisan serve --host=127.0.0.1 --port=8000
 npm run dev
 ```
 
-Still open **http://localhost:8000**, not :5173.
+Prefer **http://localhost:8000**. Visiting `:5173` redirects there automatically.
 
 ## Production / shared hosting build
 
