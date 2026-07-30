@@ -11,6 +11,7 @@
         <link rel="icon" type="image/svg+xml" href="/favicon.svg">
         <link rel="apple-touch-icon" href="/pwa-192x192.png">
 
+        @viteReactRefresh
         @vite(['resources/js/main.tsx'])
     </head>
     <body>
