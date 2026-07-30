@@ -83,6 +83,95 @@ class FinanceTest extends TestCase
     }
 
     /**
+     * Manual invoice amount = (plan price × months) + penalty.
+     */
+    public function test_manual_invoice_computes_amount_from_plan_months_and_penalty(): void
+    {
+        TenantContext::setTenant($this->tenant);
+
+        $memberPlan = MemberPlan::create([
+            'member_id' => $this->member->id,
+            'plan_id' => $this->plan->id,
+            'starts_at' => now(),
+            'expires_at' => now()->addMonth(),
+            'status' => 'active',
+        ]);
+
+        TenantContext::clear();
+
+        $response = $this->actingAs($this->user)
+            ->postJson('/api/invoices', [
+                'member_id' => $this->member->id,
+                'months' => 3,
+                'penalty' => 15.50,
+                'issued_at' => now()->toDateString(),
+                'due_at' => now()->addDays(7)->toDateString(),
+            ]);
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('amount', '375.50');
+        $response->assertJsonPath('member_plan_id', $memberPlan->id);
+        $response->assertJsonPath('member_id', $this->member->id);
+
+        // 120 × 3 + 15.50 = 375.50
+        $this->assertDatabaseHas('invoices', [
+            'member_id' => $this->member->id,
+            'member_plan_id' => $memberPlan->id,
+            'amount' => 375.50,
+            'status' => 'unpaid',
+        ]);
+    }
+
+    /**
+     * Creating an invoice for a member without an active plan fails.
+     */
+    public function test_manual_invoice_requires_active_member_plan(): void
+    {
+        $response = $this->actingAs($this->user)
+            ->postJson('/api/invoices', [
+                'member_id' => $this->member->id,
+                'months' => 1,
+                'issued_at' => now()->toDateString(),
+                'due_at' => now()->addDays(7)->toDateString(),
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['member_id']);
+    }
+
+    /**
+     * Client-supplied amount is ignored; server uses plan price.
+     */
+    public function test_manual_invoice_ignores_client_supplied_amount(): void
+    {
+        TenantContext::setTenant($this->tenant);
+
+        MemberPlan::create([
+            'member_id' => $this->member->id,
+            'plan_id' => $this->plan->id,
+            'starts_at' => now(),
+            'expires_at' => now()->addMonth(),
+            'status' => 'active',
+        ]);
+
+        TenantContext::clear();
+
+        $response = $this->actingAs($this->user)
+            ->postJson('/api/invoices', [
+                'member_id' => $this->member->id,
+                'months' => 2,
+                'penalty' => 0,
+                'amount' => 1.00, // should not be used
+                'issued_at' => now()->toDateString(),
+                'due_at' => now()->addDays(7)->toDateString(),
+            ]);
+
+        $response->assertStatus(201);
+        // 120 × 2 = 240
+        $response->assertJsonPath('amount', '240.00');
+    }
+
+    /**
      * Test payment idempotency on retry.
      */
     public function test_payment_idempotency_on_retry(): void

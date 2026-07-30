@@ -45,7 +45,8 @@ export const FinanceDashboard = () => {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
 
   // Forms data
-  const [invoiceForm, setInvoiceForm] = useState({ member_id: '', amount: '', due_at: '' });
+  const [invoiceForm, setInvoiceForm] = useState({ member_id: '', months: '1', penalty: '', due_at: '' });
+  const [invoiceError, setInvoiceError] = useState('');
   const [paymentForm, setPaymentForm] = useState({ member_id: '', invoice_id: '', amount: '', method: 'cash' });
   const [expenseForm, setExpenseForm] = useState({ category: 'rent', amount: '', incurred_at: '', notes: '' });
   
@@ -58,6 +59,16 @@ export const FinanceDashboard = () => {
 
   // Auxiliary data
   const [members, setMembers] = useState<any[]>([]);
+
+  const selectedInvoiceMember = members.find((m: any) => m.id === invoiceForm.member_id);
+  const selectedActivePlan =
+    selectedInvoiceMember?.active_member_plan || selectedInvoiceMember?.activeMemberPlan || null;
+  const selectedPlan = selectedActivePlan?.plan || null;
+  const planPrice = selectedPlan ? parseFloat(selectedPlan.price) : 0;
+  const invoiceMonths = Math.max(1, parseInt(invoiceForm.months || '1', 10) || 1);
+  const invoicePenalty = Math.max(0, parseFloat(invoiceForm.penalty || '0') || 0);
+  const invoiceComputedTotal = planPrice * invoiceMonths + invoicePenalty;
+  const invoiceCurrency = selectedPlan?.currency || 'USD';
 
   const loadData = async () => {
     try {
@@ -95,17 +106,35 @@ export const FinanceDashboard = () => {
 
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
+    setInvoiceError('');
+
+    if (!selectedActivePlan || !selectedPlan) {
+      setInvoiceError('Selected member has no active membership plan.');
+      return;
+    }
+
     const payload = {
-      ...invoiceForm,
-      amount: parseFloat(invoiceForm.amount),
-      issued_at: new Date().toISOString().split('T')[0]
+      member_id: invoiceForm.member_id,
+      months: invoiceMonths,
+      penalty: invoicePenalty,
+      due_at: invoiceForm.due_at,
+      issued_at: new Date().toISOString().split('T')[0],
     };
     const res = await apiRequest('/api/invoices', 'POST', payload);
     if (res.status === 201) {
       setShowInvoiceModal(false);
-      setInvoiceForm({ member_id: '', amount: '', due_at: '' });
+      setInvoiceForm({ member_id: '', months: '1', penalty: '', due_at: '' });
+      setInvoiceError('');
       loadData();
+      return;
     }
+
+    const apiMessage =
+      res.data?.errors?.member_id?.[0] ||
+      res.data?.errors?.months?.[0] ||
+      res.data?.message ||
+      'Failed to create invoice.';
+    setInvoiceError(apiMessage);
   };
 
   const handleRecordPayment = async (e: React.FormEvent) => {
@@ -456,24 +485,118 @@ export const FinanceDashboard = () => {
             <form onSubmit={handleCreateInvoice}>
               <div className="form-group">
                 <label className="form-label">Target Gym Member</label>
-                <select className="form-select" required value={invoiceForm.member_id} onChange={e => setInvoiceForm({ ...invoiceForm, member_id: e.target.value })}>
+                <select
+                  className="form-select"
+                  required
+                  value={invoiceForm.member_id}
+                  onChange={e => {
+                    setInvoiceError('');
+                    setInvoiceForm({ ...invoiceForm, member_id: e.target.value });
+                  }}
+                >
                   <option value="">Select Member...</option>
                   {members.map(m => (
                     <option key={m.id} value={m.id}>{m.first_name} {m.last_name}</option>
                   ))}
                 </select>
               </div>
+
+              {invoiceForm.member_id && !selectedPlan && (
+                <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(220, 38, 38, 0.08)', color: 'var(--status-inactive)', fontSize: '0.9rem' }}>
+                  This member has no active membership plan. Assign a plan before creating an invoice.
+                </div>
+              )}
+
+              {selectedPlan && (
+                <div className="form-group">
+                  <label className="form-label">Membership Plan</label>
+                  <div style={{ padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-secondary, #f4f4f5)', fontSize: '0.95rem' }}>
+                    <strong>{selectedPlan.name}</strong>
+                    <span style={{ display: 'block', marginTop: '4px', opacity: 0.85 }}>
+                      {invoiceCurrency} {planPrice.toFixed(2)} / month
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="form-group">
-                <label className="form-label">Billing Amount (USD)</label>
-                <input type="number" step="0.01" required className="form-input" placeholder="e.g. 50.00" value={invoiceForm.amount} onChange={e => setInvoiceForm({ ...invoiceForm, amount: e.target.value })} />
+                <label className="form-label">Number of Months</label>
+                <select
+                  className="form-select"
+                  required
+                  disabled={!selectedPlan}
+                  value={invoiceForm.months}
+                  onChange={e => setInvoiceForm({ ...invoiceForm, months: e.target.value })}
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={String(n)}>{n} {n === 1 ? 'month' : 'months'}</option>
+                  ))}
+                </select>
               </div>
+
+              <div className="form-group">
+                <label className="form-label">Additional / Penalty ({invoiceCurrency})</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="form-input"
+                  placeholder="Optional, e.g. 25.00"
+                  disabled={!selectedPlan}
+                  value={invoiceForm.penalty}
+                  onChange={e => setInvoiceForm({ ...invoiceForm, penalty: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Invoice Total</label>
+                <div style={{ padding: '12px 14px', borderRadius: '8px', background: 'var(--bg-secondary, #f4f4f5)', fontWeight: 600, fontSize: '1.05rem' }}>
+                  {selectedPlan
+                    ? `${invoiceCurrency} ${invoiceComputedTotal.toFixed(2)}`
+                    : '—'}
+                  {selectedPlan && (
+                    <span style={{ display: 'block', marginTop: '4px', fontWeight: 400, fontSize: '0.85rem', opacity: 0.8 }}>
+                      ({planPrice.toFixed(2)} × {invoiceMonths}){invoicePenalty > 0 ? ` + ${invoicePenalty.toFixed(2)} penalty` : ''}
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div className="form-group">
                 <label className="form-label">Payment Due Date</label>
-                <input type="date" required className="form-input" value={invoiceForm.due_at} onChange={e => setInvoiceForm({ ...invoiceForm, due_at: e.target.value })} />
+                <input
+                  type="date"
+                  required
+                  className="form-input"
+                  value={invoiceForm.due_at}
+                  onChange={e => setInvoiceForm({ ...invoiceForm, due_at: e.target.value })}
+                />
               </div>
+
+              {invoiceError && (
+                <div style={{ marginBottom: '12px', color: 'var(--status-inactive)', fontSize: '0.9rem' }}>
+                  {invoiceError}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
-                <button type="button" onClick={() => setShowInvoiceModal(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-primary">Create Invoice</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowInvoiceModal(false);
+                    setInvoiceError('');
+                  }}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!selectedPlan}
+                >
+                  Create Invoice
+                </button>
               </div>
             </form>
           </div>
