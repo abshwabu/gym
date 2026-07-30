@@ -414,6 +414,25 @@ body {
   background-color: rgba(0, 0, 0, 0.4);
 }
 
+/* Native date/time picker icons are dark by default and disappear on dark inputs */
+input[type="date"].form-input,
+input[type="time"].form-input,
+input[type="datetime-local"].form-input,
+input[type="month"].form-input,
+input[type="week"].form-input {
+  color-scheme: dark;
+}
+
+input[type="date"].form-input::-webkit-calendar-picker-indicator,
+input[type="time"].form-input::-webkit-calendar-picker-indicator,
+input[type="datetime-local"].form-input::-webkit-calendar-picker-indicator,
+input[type="month"].form-input::-webkit-calendar-picker-indicator,
+input[type="week"].form-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: invert(1);
+}
+
 .form-select {
   width: 100%;
   background-color: rgba(0, 0, 0, 0.25); /* Consistent input background */
