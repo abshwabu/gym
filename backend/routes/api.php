@@ -17,11 +17,13 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\FinanceReportController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\StaffShiftController;
 use App\Http\Controllers\StaffAttendanceController;
 use App\Http\Controllers\LeaveRequestController;
 use App\Http\Controllers\PayrollController;
+use App\Http\Controllers\FingerprintController;
 
 // Unauthenticated routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -83,6 +85,16 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     Route::get('/members', [MemberController::class, 'index'])->middleware('privilege:members.view');
     Route::post('/members', [MemberController::class, 'store'])->middleware('privilege:members.create');
 
+    // Member fingerprint (WebAuthn platform authenticator) enrollment
+    Route::get('/members/{member}/fingerprints', [FingerprintController::class, 'index'])->middleware('privilege:members.view');
+    Route::post('/members/{member}/fingerprints/register/options', [FingerprintController::class, 'registerOptions'])->middleware('privilege:members.update');
+    Route::post('/members/{member}/fingerprints/register', [FingerprintController::class, 'register'])->middleware('privilege:members.update');
+    Route::delete('/members/{member}/fingerprints/{credentialId}', [FingerprintController::class, 'destroy'])->middleware('privilege:members.update');
+
+    // Self-check fingerprint authentication
+    Route::post('/fingerprint/authenticate/options', [FingerprintController::class, 'authenticateOptions'])->middleware('privilege:attendance.mark');
+    Route::post('/fingerprint/authenticate', [FingerprintController::class, 'authenticate'])->middleware('privilege:attendance.mark');
+
     // Member Plans (Subscriptions)
     Route::get('/members/{member}/plans', [MemberPlanController::class, 'index'])->middleware('privilege:members.view');
     Route::post('/members/{member}/plans', [MemberPlanController::class, 'store'])->middleware('privilege:members.update');
@@ -124,6 +136,9 @@ Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
     // Finance Reports
     Route::get('/finance/reports/revenue', [FinanceReportController::class, 'revenue'])->middleware('privilege:finance.reports.view');
     Route::get('/finance/reports/outstanding', [FinanceReportController::class, 'outstanding'])->middleware('privilege:finance.reports.view');
+
+    // Analytics
+    Route::get('/analytics/summary', [AnalyticsController::class, 'summary'])->middleware('privilege:analytics.view');
 
     // HR Employee Profiles
     Route::get('/employees', [EmployeeController::class, 'index'])->middleware('privilege:hr.staff.manage');

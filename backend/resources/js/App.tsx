@@ -5,16 +5,25 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, Activity, CreditCard, Clock, LogOut, CheckCircle, 
   XCircle, RefreshCw, Plus, Search, UserPlus, Info, Shield, Key, User,
-  AlertTriangle, DollarSign, Briefcase, QrCode
+  AlertTriangle, DollarSign, Briefcase, QrCode, Fingerprint, BarChart3
 } from 'lucide-react';
 import { db } from './db/gymDb';
 import { Html5Qrcode } from 'html5-qrcode';
 import { SyncManager } from './sync/syncManager';
+import {
+  authenticateWithFingerprint,
+  enrollMemberFingerprint,
+  fetchMemberFingerprints,
+  isWebAuthnAvailable,
+  removeMemberFingerprint,
+  type FingerprintCredentialMeta,
+} from './webauthn';
 import { 
   PlatformTenants, PlatformTenantDetails, 
   PlatformSubscriptionPlans, PlatformImpersonationLogs 
 } from './components/PlatformComponents';
 import { FinanceDashboard, HRDashboard } from './components/FinanceAndHRComponents';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 
 // --- DUMMY/BUNDLED VERIFIABLE LICENSE PUBLIC KEY ---
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -328,12 +337,14 @@ const ImpersonationBanner = () => {
 };
 
 // --- SELF CHECK-IN KIOSK COMPONENT ---
-const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: { members: any[]; handleCheckin: (id: string, force?: boolean, isKiosk?: boolean) => Promise<any>; plans: any[]; localMemberPlans: any[] }) => {
+const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: { members: any[]; handleCheckin: (id: string, force?: boolean, isKiosk?: boolean, method?: 'kiosk' | 'fingerprint') => Promise<any>; plans: any[]; localMemberPlans: any[] }) => {
   const [scanInput, setScanInput] = useState('');
   const [lastCheckedMember, setLastCheckedMember] = useState<any>(null);
   const [kioskStatus, setKioskStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [fingerprintBusy, setFingerprintBusy] = useState(false);
+  const fingerprintSupported = isWebAuthnAvailable();
 
   const [cameraActive, setCameraActive] = useState(false);
   const qrScannerRef = useRef<Html5Qrcode | null>(null);
@@ -469,7 +480,11 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
       return;
     }
 
-    const isInactive = member.status && ['inactive', 'frozen', 'suspended', 'cancelled'].includes(member.status.toLowerCase());
+    await finishKioskCheckinForMember(member, 'kiosk');
+  };
+
+  const finishKioskCheckinForMember = async (member: any, method: 'kiosk' | 'fingerprint' = 'kiosk') => {
+    const isInactive = member.status && ['inactive', 'frozen', 'suspended', 'cancelled'].includes(String(member.status).toLowerCase());
     if (isInactive) {
       setKioskStatus('error');
       setErrorMessage(`Check-in rejected. Member account is ${member.status}.`);
@@ -481,26 +496,20 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
       return;
     }
 
-    // Call the check-in and inspect the result
-    const result = await handleCheckin(member.id, false, true);
-    
+    const result = await handleCheckin(member.id, false, true, method);
     if (result && result.success) {
-      // Find their plan name to display
       const mAny = member as any;
       const activeSub = localMemberPlans.find((p: any) => p.member_id === member.id && p.status?.toLowerCase() === 'active')
         || (mAny.active_member_plan ? { ...mAny.active_member_plan, plan_id: mAny.active_member_plan.plan_id || mAny.active_member_plan.plan?.id } : null)
         || (mAny.activeMemberPlan ? { ...mAny.activeMemberPlan, plan_id: mAny.activeMemberPlan.plan_id || mAny.activeMemberPlan.plan?.id } : null)
         || (mAny.active_plan ? { ...mAny.active_plan, plan_id: mAny.active_plan.plan_id || mAny.active_plan.plan?.id } : null);
-
       const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) || activeSub.plan : null;
-      
       setLastCheckedMember({
         ...member,
         active_plan: activeSub ? { ...activeSub, plan } : null
       });
       setKioskStatus('success');
       playBeep('success');
-      
       setTimeout(() => {
         setKioskStatus('idle');
         setScanInput('');
@@ -519,6 +528,25 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
         setKioskStatus('idle');
         setScanInput('');
       }, 4000);
+    }
+  };
+
+  const processFingerprintCheckin = async () => {
+    if (fingerprintBusy) return;
+    setFingerprintBusy(true);
+    try {
+      const member = await authenticateWithFingerprint();
+      const localMember = members.find((m: any) => m.id === member.id) || member;
+      await finishKioskCheckinForMember(localMember, 'fingerprint');
+    } catch (err: any) {
+      setKioskStatus('error');
+      setErrorMessage(err?.message || 'Fingerprint check-in failed.');
+      playBeep('error');
+      setTimeout(() => {
+        setKioskStatus('idle');
+      }, 4000);
+    } finally {
+      setFingerprintBusy(false);
     }
   };
 
@@ -574,10 +602,48 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
               Self-Checkin Terminal
             </span>
           </div>
-          <h1 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '8px', letterSpacing: '-0.5px' }}>Scan Member Pass</h1>
+          <h1 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '8px', letterSpacing: '-0.5px' }}>Self Check-in</h1>
           <p style={{ color: '#94a3b8', fontSize: '15px', marginBottom: '32px' }}>
-            Hold your mobile pass or QR card key in front of the scanner.
+            Scan your QR pass or use the fingerprint reader to check in.
           </p>
+
+          {/* Fingerprint check-in */}
+          <div style={{
+            border: '1px solid #374151',
+            borderRadius: '16px',
+            padding: '20px',
+            backgroundColor: 'rgba(17, 24, 39, 0.7)',
+            marginBottom: '20px',
+            width: '100%'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '12px' }}>
+              <Fingerprint size={22} color="#0d9488" />
+              <span style={{ fontWeight: 700, fontSize: '15px' }}>Fingerprint</span>
+            </div>
+            <button
+              onClick={processFingerprintCheckin}
+              disabled={fingerprintBusy || !fingerprintSupported}
+              className="btn btn-primary"
+              style={{
+                width: '100%',
+                padding: '14px 20px',
+                fontSize: '15px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                opacity: fingerprintSupported ? 1 : 0.55,
+              }}
+            >
+              <Fingerprint size={18} />
+              <span>{fingerprintBusy ? 'Waiting for fingerprint…' : 'Check in with Fingerprint'}</span>
+            </button>
+            {!fingerprintSupported && (
+              <p style={{ marginTop: '10px', fontSize: '12px', color: '#fbbf24' }}>
+                WebAuthn unavailable. Use HTTPS/localhost and a browser with platform authenticator support.
+              </p>
+            )}
+          </div>
 
           {/* Scanner Simulation box */}
           <div style={{
@@ -590,6 +656,9 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
             flexDirection: 'column',
             alignItems: 'center'
           }}>
+            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '1px' }}>
+              Or scan QR pass
+            </div>
             {/* Real Webcam Stream container or fallback visual box */}
             <div style={{ 
               width: '280px', 
@@ -1005,6 +1074,8 @@ export default function App() {
 
   // Member Profile modal
   const [selectedMemberProfile, setSelectedMemberProfile] = useState<any>(null);
+  const [memberFingerprints, setMemberFingerprints] = useState<FingerprintCredentialMeta[]>([]);
+  const [fingerprintEnrolling, setFingerprintEnrolling] = useState(false);
   const [showAssignPlanModal, setShowAssignPlanModal] = useState(false);
   const [assignPlanForm, setAssignPlanForm] = useState({
     plan_id: '',
@@ -1315,7 +1386,7 @@ export default function App() {
   };
 
   // Log Check-in (Optimistic UI)
-  const handleCheckin = async (memberId: string, force = false, isKiosk = false) => {
+  const handleCheckin = async (memberId: string, force = false, isKiosk = false, method?: 'manual' | 'kiosk' | 'fingerprint' | 'qr_scan') => {
     const member = members.find((m: any) => m.id === memberId);
     if (!member) return { success: false, reason: 'not_found' };
 
@@ -1353,12 +1424,13 @@ export default function App() {
 
     const attendanceId = generateUUID();
     const checked_in_at = new Date().toISOString();
+    const resolvedMethod = method || (isKiosk ? 'kiosk' : 'manual');
     const payload = {
       id: attendanceId,
       member_id: memberId,
       member_plan_id: activeSub ? activeSub.id : null,
       checked_in_at,
-      method: isKiosk ? 'kiosk' : 'manual',
+      method: resolvedMethod,
     };
 
     try {
@@ -1389,6 +1461,7 @@ export default function App() {
     e.preventDefault();
     const memberId = editingMember ? editingMember.id : generateUUID();
     const action = editingMember ? 'update' : 'create';
+    const isNewMember = !editingMember;
 
     const payload = {
       first_name: memberForm.first_name,
@@ -1401,7 +1474,7 @@ export default function App() {
     try {
       await SyncManager.queueWrite('members', action, memberId, payload);
 
-      if (!editingMember && memberForm.membership_plan_id) {
+      if (isNewMember && memberForm.membership_plan_id) {
         const plan = plans.find((p: any) => p.id === memberForm.membership_plan_id);
         if (plan) {
           const subId = generateUUID();
@@ -1427,12 +1500,68 @@ export default function App() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['members'] });
-      showToast(editingMember ? 'Member profile updated.' : 'Member registered successfully.');
+      showToast(isNewMember ? 'Member registered successfully.' : 'Member profile updated.');
       setShowMemberModal(false);
       setEditingMember(null);
       setMemberForm({ first_name: '', last_name: '', email: '', phone: '', status: 'Active', membership_plan_id: '' });
+
+      // After new enrollment, offer fingerprint registration on this device.
+      if (isNewMember && hasPrivilege('members.update') && isWebAuthnAvailable()) {
+        const enrollNow = window.confirm('Member saved. Add a fingerprint for self-check now?');
+        if (enrollNow) {
+          try {
+            setFingerprintEnrolling(true);
+            // Ensure the member exists on the server before WebAuthn registration.
+            if (token) {
+              await SyncManager.syncNow(token);
+            }
+            await enrollMemberFingerprint(memberId);
+            showToast('Fingerprint enrolled for self-check.');
+          } catch (fpErr: any) {
+            showToast(fpErr?.message || 'Fingerprint enrollment skipped.', 'error');
+          } finally {
+            setFingerprintEnrolling(false);
+          }
+        }
+      }
     } catch (e) {
       showToast('Error saving member.', 'error');
+    }
+  };
+
+  const loadMemberFingerprints = async (memberId: string) => {
+    try {
+      const data = await fetchMemberFingerprints(memberId);
+      setMemberFingerprints(data.credentials || []);
+      setSelectedMemberProfile((prev: any) => prev ? { ...prev, has_fingerprint: data.has_fingerprint } : prev);
+    } catch {
+      setMemberFingerprints([]);
+    }
+  };
+
+  const handleEnrollFingerprint = async (memberId: string) => {
+    if (fingerprintEnrolling) return;
+    setFingerprintEnrolling(true);
+    try {
+      await enrollMemberFingerprint(memberId);
+      showToast('Fingerprint enrolled successfully.');
+      await loadMemberFingerprints(memberId);
+      queryClient.invalidateQueries({ queryKey: ['members'] });
+    } catch (err: any) {
+      showToast(err?.message || 'Could not enroll fingerprint.', 'error');
+    } finally {
+      setFingerprintEnrolling(false);
+    }
+  };
+
+  const handleRemoveFingerprint = async (memberId: string, credentialId: string) => {
+    if (!window.confirm('Remove this enrolled fingerprint?')) return;
+    try {
+      await removeMemberFingerprint(memberId, credentialId);
+      showToast('Fingerprint removed.');
+      await loadMemberFingerprints(memberId);
+    } catch (err: any) {
+      showToast(err?.message || 'Could not remove fingerprint.', 'error');
     }
   };
 
@@ -2101,6 +2230,13 @@ export default function App() {
                     </button>
                   )}
 
+                  {hasPrivilege('analytics.view') && (
+                    <button onClick={() => navigate('/analytics')} className={`sidebar-link ${location.pathname.startsWith('/analytics') ? 'active' : ''}`}>
+                      <BarChart3 size={18} />
+                      <span>Analytics</span>
+                    </button>
+                  )}
+
                   {hasPrivilege('hr.staff.manage') && (
                     <button onClick={() => navigate('/hr')} className={`sidebar-link ${location.pathname.startsWith('/hr') ? 'active' : ''}`}>
                       <Briefcase size={18} />
@@ -2338,6 +2474,7 @@ export default function App() {
                                               subscriptions: localMemberPlans.filter((p: any) => p.member_id === member.id),
                                               attendances: attendances.filter((a: any) => a.member_id === member.id),
                                             });
+                                            loadMemberFingerprints(member.id);
                                           }} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '13px', borderRadius: '8px' }}>
                                             Profile
                                           </button>
@@ -2704,6 +2841,11 @@ export default function App() {
                       hasPrivilege('finance.view') ? <FinanceDashboard /> : <Navigate to="/" replace />
                     } />
 
+                    {/* Analytics view */}
+                    <Route path="/analytics" element={
+                      hasPrivilege('analytics.view') ? <AnalyticsDashboard /> : <Navigate to="/" replace />
+                    } />
+
                     {/* HR view */}
                     <Route path="/hr" element={
                       hasPrivilege('hr.staff.manage') ? <HRDashboard /> : <Navigate to="/" replace />
@@ -2792,6 +2934,58 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Fingerprint enrollment */}
+                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginBottom: '16px' }}>
+                    <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Fingerprint size={14} /> Fingerprint for Self-Check
+                    </h4>
+                    {memberFingerprints.length === 0 ? (
+                      <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                        No fingerprint enrolled yet. Enroll on this kiosk/device so the member can check in with the reader.
+                      </p>
+                    ) : (
+                      <div style={{ marginBottom: '10px' }}>
+                        {memberFingerprints.map((cred) => (
+                          <div key={cred.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', marginBottom: '8px' }}>
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: 600 }}>{cred.device_name || 'Fingerprint reader'}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                Enrolled {cred.created_at ? new Date(cred.created_at).toLocaleString() : ''}
+                              </div>
+                            </div>
+                            {hasPrivilege('members.update') && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveFingerprint(selectedMemberProfile.id, cred.id)}
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '12px' }}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {hasPrivilege('members.update') && (
+                      <button
+                        type="button"
+                        onClick={() => handleEnrollFingerprint(selectedMemberProfile.id)}
+                        disabled={fingerprintEnrolling || !isWebAuthnAvailable()}
+                        className="btn btn-primary"
+                        style={{ padding: '8px 14px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                      >
+                        <Fingerprint size={16} />
+                        <span>{fingerprintEnrolling ? 'Waiting for fingerprint…' : 'Add Fingerprint'}</span>
+                      </button>
+                    )}
+                    {!isWebAuthnAvailable() && (
+                      <p style={{ marginTop: '8px', fontSize: '12px', color: 'var(--status-offline)' }}>
+                        Fingerprint enrollment requires a secure origin (HTTPS or localhost) and a platform authenticator.
+                      </p>
+                    )}
+                  </div>
+
                   {/* Attendance Log list */}
                   <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
                     <h4 style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', marginBottom: '12px' }}>Attendance History ({selectedMemberProfile.attendances?.length || 0})</h4>
@@ -2810,7 +3004,7 @@ export default function App() {
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
-                    <button onClick={() => setSelectedMemberProfile(null)} className="btn btn-secondary">Close Profile</button>
+                    <button onClick={() => { setSelectedMemberProfile(null); setMemberFingerprints([]); }} className="btn btn-secondary">Close Profile</button>
                   </div>
                 </div>
               </div>

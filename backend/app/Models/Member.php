@@ -47,4 +47,12 @@ class Member extends Model
     {
         return $this->hasMany(Attendance::class);
     }
+
+    /**
+     * WebAuthn / fingerprint credentials enrolled for this member.
+     */
+    public function webauthnCredentials(): HasMany
+    {
+        return $this->hasMany(MemberWebAuthnCredential::class);
+    }
 }

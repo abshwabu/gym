@@ -72,6 +72,9 @@ class DatabaseSeeder extends Seeder
             ['key' => 'finance.expenses.manage', 'label' => 'Manage Expenses', 'category' => 'Finance'],
             ['key' => 'finance.reports.view', 'label' => 'View Finance Reports', 'category' => 'Finance'],
 
+            // Analytics
+            ['key' => 'analytics.view', 'label' => 'View Analytics', 'category' => 'Analytics'],
+
             // HR
             ['key' => 'hr.staff.manage', 'label' => 'Manage HR Staff Profiles', 'category' => 'HR'],
             ['key' => 'hr.attendance.view', 'label' => 'View Staff Attendance', 'category' => 'HR'],
@@ -122,6 +125,7 @@ class DatabaseSeeder extends Seeder
             'staff.view', 'staff.invite', 'staff.update', 'staff.disable',
             'roles.view', 'roles.create', 'roles.update', 'roles.delete',
             'finance.view', 'finance.invoices.manage', 'finance.payments.record', 'finance.expenses.manage', 'finance.reports.view',
+            'analytics.view',
             'hr.staff.manage', 'hr.attendance.view', 'hr.shifts.manage', 'hr.leave.approve', 'hr.payroll.manage'
         ])->pluck('id')->toArray();
         $managerRole->privileges()->sync($managerPrivileges);
@@ -142,7 +146,8 @@ class DatabaseSeeder extends Seeder
         );
         $financePrivileges = Privilege::whereIn('key', [
             'members.view',
-            'finance.view', 'finance.invoices.manage', 'finance.payments.record', 'finance.expenses.manage', 'finance.reports.view'
+            'finance.view', 'finance.invoices.manage', 'finance.payments.record', 'finance.expenses.manage', 'finance.reports.view',
+            'analytics.view',
         ])->pluck('id')->toArray();
         $financeRole->privileges()->sync($financePrivileges);
 

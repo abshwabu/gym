@@ -60,7 +60,7 @@ export interface CacheAttendance {
   member_plan_id: string | null;
   checked_in_at: string;
   checked_in_by: string | null;
-  method: 'manual' | 'qr_scan' | 'kiosk';
+  method: 'manual' | 'qr_scan' | 'kiosk' | 'fingerprint';
   synced_at: string | null;
   created_at?: string;
   updated_at?: string;

@@ -42,7 +42,7 @@ class AttendanceController extends Controller
             'member_id' => 'required|uuid|exists:members,id',
             'member_plan_id' => 'nullable|uuid',
             'checked_in_at' => 'required|date',
-            'method' => 'nullable|string|in:manual,qr_scan,kiosk,front_desk',
+            'method' => 'nullable|string|in:manual,qr_scan,kiosk,front_desk,fingerprint',
             'from_offline' => 'nullable|boolean',
         ]);
 
@@ -51,7 +51,7 @@ class AttendanceController extends Controller
         $memberPlanId = $request->input('member_plan_id');
         $checkedInAt = Carbon::parse($request->input('checked_in_at'));
         $rawMethod = $request->input('method', 'manual');
-        $method = in_array($rawMethod, ['manual', 'qr_scan', 'kiosk']) ? $rawMethod : 'manual';
+        $method = in_array($rawMethod, ['manual', 'qr_scan', 'kiosk', 'fingerprint']) ? $rawMethod : 'manual';
         $fromOffline = $request->input('from_offline', false);
 
         // 1. Idempotency Check
@@ -120,7 +120,7 @@ class AttendanceController extends Controller
             'attendances.*.member_id' => 'required|uuid|exists:members,id',
             'attendances.*.member_plan_id' => 'nullable|uuid',
             'attendances.*.checked_in_at' => 'required|date',
-            'attendances.*.method' => 'nullable|string|in:manual,qr_scan,kiosk,front_desk',
+            'attendances.*.method' => 'nullable|string|in:manual,qr_scan,kiosk,front_desk,fingerprint',
         ]);
 
         $batch = $request->input('attendances');
@@ -134,7 +134,7 @@ class AttendanceController extends Controller
                 $memberPlanId = $item['member_plan_id'] ?? null;
                 $checkedInAt = Carbon::parse($item['checked_in_at']);
                 $rawMethod = $item['method'] ?? 'manual';
-                $method = in_array($rawMethod, ['manual', 'qr_scan', 'kiosk']) ? $rawMethod : 'manual';
+                $method = in_array($rawMethod, ['manual', 'qr_scan', 'kiosk', 'fingerprint']) ? $rawMethod : 'manual';
 
                 // Check duplicate
                 $existing = Attendance::find($id);

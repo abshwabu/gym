@@ -14,7 +14,16 @@ class MemberController extends Controller
      */
     public function index()
     {
-        $members = Member::with('activeMemberPlan.plan')->orderBy('first_name')->orderBy('last_name')->get();
+        $members = Member::with('activeMemberPlan.plan')
+            ->withCount('webauthnCredentials')
+            ->orderBy('first_name')
+            ->orderBy('last_name')
+            ->get()
+            ->map(function (Member $member) {
+                $member->setAttribute('has_fingerprint', $member->webauthn_credentials_count > 0);
+                return $member;
+            });
+
         return response()->json($members);
     }
 
