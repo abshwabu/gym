@@ -24,6 +24,14 @@ import {
 } from './components/PlatformComponents';
 import { FinanceDashboard, HRDashboard } from './components/FinanceAndHRComponents';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import {
+  formatSessionLimitLabel,
+  isSessionLimitReached,
+  resolveSessionLimitType,
+  sessionsUsedTowardLimit,
+  shouldExpireOnSessionCap,
+  type SessionLimitType,
+} from './sessionLimits';
 
 // --- DUMMY/BUNDLED VERIFIABLE LICENSE PUBLIC KEY ---
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -520,7 +528,7 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
         'no_plan': 'No active membership plan found.',
         'frozen': 'Your membership plan is frozen. Please see front desk.',
         'expired': 'Your membership plan is expired. Please renew.',
-        'over_limit': 'Check-in limit reached for this session card.',
+        'over_limit': 'Check-in limit reached for this membership.',
       };
       setErrorMessage(reasons[result?.reason || ''] || 'Check-in failed. Please see front desk.');
       playBeep('error');
@@ -1091,6 +1099,7 @@ export default function App() {
     billing_cycle: 'monthly',
     custom_cycle_days: '',
     price: '',
+    session_limit_type: 'unlimited' as SessionLimitType,
     session_limit: '',
     freeze_allowance_days: '0',
     is_active: true,
@@ -1415,7 +1424,7 @@ export default function App() {
           if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'expired' });
           return { success: false, reason: 'expired' };
         }
-        if (plan && plan.session_limit !== null && (activeSub.sessions_used || 0) >= plan.session_limit) {
+        if (plan && isSessionLimitReached(plan, activeSub.sessions_used || 0, attendances, activeSub.id)) {
           if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'over_limit' });
           return { success: false, reason: 'over_limit' };
         }
@@ -1438,9 +1447,12 @@ export default function App() {
       
       // Optimistically update sessions count in cache
       if (activeSub) {
+        const nextUsed = (activeSub.sessions_used || 0) + 1;
         await db.cache_member_plans.update(activeSub.id, {
-          sessions_used: activeSub.sessions_used + 1,
-          status: plan && plan.session_limit !== null && (activeSub.sessions_used + 1) >= plan.session_limit ? 'expired' : 'active'
+          sessions_used: nextUsed,
+          status: plan && shouldExpireOnSessionCap(plan) && nextUsed >= (plan.session_limit as number)
+            ? 'expired'
+            : 'active',
         });
       }
 
@@ -1570,13 +1582,15 @@ export default function App() {
     e.preventDefault();
     const planId = generateUUID();
 
+    const limitType = planForm.session_limit_type;
     const payload = {
       name: planForm.name,
       billing_cycle: planForm.billing_cycle,
       custom_cycle_days: planForm.billing_cycle === 'custom_days' ? parseInt(planForm.custom_cycle_days) : null,
       price: parseFloat(planForm.price),
       currency: 'USD',
-      session_limit: planForm.session_limit ? parseInt(planForm.session_limit) : null,
+      session_limit_type: limitType,
+      session_limit: limitType === 'unlimited' ? null : parseInt(planForm.session_limit),
       freeze_allowance_days: parseInt(planForm.freeze_allowance_days),
       is_active: planForm.is_active,
     };
@@ -1586,7 +1600,7 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['plans'] });
       showToast(`Plan "${planForm.name}" created.`);
       setShowPlanModal(false);
-      setPlanForm({ name: '', billing_cycle: 'monthly', custom_cycle_days: '', price: '', session_limit: '', freeze_allowance_days: '0', is_active: true });
+      setPlanForm({ name: '', billing_cycle: 'monthly', custom_cycle_days: '', price: '', session_limit_type: 'unlimited', session_limit: '', freeze_allowance_days: '0', is_active: true });
     } catch (e) {
       showToast('Error creating plan.', 'error');
     }
@@ -2533,6 +2547,7 @@ export default function App() {
                                 <tr>
                                   <th>Plan Name</th>
                                   <th>Billing Cycle</th>
+                                  <th>Sessions</th>
                                   <th>Price</th>
                                   <th>Status</th>
                                 </tr>
@@ -2540,7 +2555,7 @@ export default function App() {
                               <tbody>
                                 {plans.length === 0 ? (
                                   <tr>
-                                    <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+                                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
                                       No plans available.
                                     </td>
                                   </tr>
@@ -2551,6 +2566,7 @@ export default function App() {
                                       <td style={{ textTransform: 'capitalize' }}>
                                         {plan.billing_cycle === 'custom_days' ? `${plan.custom_cycle_days} Days` : plan.billing_cycle}
                                       </td>
+                                      <td>{formatSessionLimitLabel(plan)}</td>
                                       <td>${plan.price}</td>
                                       <td>
                                         <span className={`badge badge-${plan.is_active ? 'active' : 'inactive'}`}>
@@ -2891,7 +2907,21 @@ export default function App() {
                               Expires: {new Date(selectedMemberProfile.active_plan.expires_at).toLocaleDateString()}
                             </div>
                             <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                              Sessions: {selectedMemberProfile.active_plan.plan?.session_limit !== null ? `${selectedMemberProfile.active_plan.sessions_used} / ${selectedMemberProfile.active_plan.plan?.session_limit}` : `${selectedMemberProfile.active_plan.sessions_used} used (unlimited)`}
+                              Sessions: {(() => {
+                                const plan = selectedMemberProfile.active_plan.plan || {};
+                                const type = resolveSessionLimitType(plan);
+                                if (type === 'unlimited') {
+                                  return `${selectedMemberProfile.active_plan.sessions_used} used (unlimited)`;
+                                }
+                                const periodUsed = sessionsUsedTowardLimit(
+                                  plan,
+                                  selectedMemberProfile.active_plan.sessions_used || 0,
+                                  selectedMemberProfile.attendances || [],
+                                  selectedMemberProfile.active_plan.id,
+                                );
+                                const suffix = type === 'per_week' ? '/week' : type === 'per_month' ? '/month' : '';
+                                return `${periodUsed} / ${plan.session_limit}${suffix}`;
+                              })()}
                             </div>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
                               {hasPrivilege('members.create') && (
@@ -3061,7 +3091,11 @@ export default function App() {
                     {advisoryWarning.type === 'no_plan' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Has no active membership subscription.</span>}
                     {advisoryWarning.type === 'frozen' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Subscription plan is frozen.</span>}
                     {advisoryWarning.type === 'expired' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Subscription plan is expired.</span>}
-                    {advisoryWarning.type === 'over_limit' && <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>• Session visit limits exceeded ({advisoryWarning.plan?.session_limit} visits max).</span>}
+                    {advisoryWarning.type === 'over_limit' && (
+                      <span style={{ display: 'block', color: 'var(--status-inactive)', marginTop: '8px', fontWeight: 'bold' }}>
+                        • Session visit limits exceeded ({formatSessionLimitLabel(advisoryWarning.plan || {})}).
+                      </span>
+                    )}
                   </p>
                   <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                     <button onClick={() => setAdvisoryWarning(null)} className="btn btn-secondary" style={{ width: '50%' }}>Cancel check-in</button>
@@ -3143,9 +3177,49 @@ export default function App() {
                       <input id="plan-price" type="number" step="0.01" min="0" className="form-input" required value={planForm.price} onChange={e => setPlanForm({ ...planForm, price: e.target.value })} />
                     </div>
                     <div className="form-group">
-                      <label className="form-label" htmlFor="session-limit">Session Limit (Visits)</label>
-                      <input id="session-limit" type="number" placeholder="Unlimited" className="form-input" value={planForm.session_limit} onChange={e => setPlanForm({ ...planForm, session_limit: e.target.value })} />
+                      <label className="form-label" htmlFor="session-limit-type">Session Limit</label>
+                      <select
+                        id="session-limit-type"
+                        className="form-select"
+                        value={planForm.session_limit_type}
+                        onChange={e => setPlanForm({
+                          ...planForm,
+                          session_limit_type: e.target.value as SessionLimitType,
+                          session_limit: e.target.value === 'unlimited' ? '' : planForm.session_limit,
+                        })}
+                      >
+                        <option value="unlimited">Unlimited visits</option>
+                        <option value="total">Total visits (punch card)</option>
+                        <option value="per_week">Visits per week</option>
+                        <option value="per_month">Visits per month</option>
+                      </select>
                     </div>
+                    {planForm.session_limit_type !== 'unlimited' && (
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="session-limit">
+                          {planForm.session_limit_type === 'per_week'
+                            ? 'Sessions per week'
+                            : planForm.session_limit_type === 'per_month'
+                              ? 'Sessions per month'
+                              : 'Total sessions allowed'}
+                        </label>
+                        <input
+                          id="session-limit"
+                          type="number"
+                          min="1"
+                          required
+                          placeholder={planForm.session_limit_type === 'per_week' ? 'e.g. 3' : planForm.session_limit_type === 'per_month' ? 'e.g. 12' : 'e.g. 10'}
+                          className="form-input"
+                          value={planForm.session_limit}
+                          onChange={e => setPlanForm({ ...planForm, session_limit: e.target.value })}
+                        />
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                          {planForm.session_limit_type === 'per_week' && 'Counted Mon–Sun for the current week. Plan stays active when the weekly cap is hit.'}
+                          {planForm.session_limit_type === 'per_month' && 'Counted for the current calendar month. Plan stays active when the monthly cap is hit.'}
+                          {planForm.session_limit_type === 'total' && 'Lifetime visits on this subscription. Reaching the cap expires the plan.'}
+                        </div>
+                      </div>
+                    )}
                     <div className="form-group">
                       <label className="form-label" htmlFor="freeze-days">Freeze Allowance (Days)</label>
                       <input id="freeze-days" type="number" min="0" className="form-input" value={planForm.freeze_allowance_days} onChange={e => setPlanForm({ ...planForm, freeze_allowance_days: e.target.value })} />

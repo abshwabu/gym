@@ -278,6 +278,64 @@ class GymSaaSTest extends TestCase
         $response->assertStatus(201);
         $this->assertDatabaseHas('plans', ['id' => $planId, 'custom_cycle_days' => 14]);
 
+        // 4. Sessions-per-week plan requires a positive count
+        $response = $this->postJson('/api/plans', [
+            'name' => '3x Weekly Fail',
+            'billing_cycle' => 'monthly',
+            'price' => 40.00,
+            'session_limit_type' => 'per_week',
+        ]);
+        $response->assertStatus(422);
+
+        // 5. Create valid per_week plan
+        $weeklyCapId = crypto_random_uuid_placeholder();
+        $response = $this->postJson('/api/plans', [
+            'id' => $weeklyCapId,
+            'name' => '3x Weekly',
+            'billing_cycle' => 'monthly',
+            'price' => 40.00,
+            'session_limit_type' => 'per_week',
+            'session_limit' => 3,
+        ]);
+        $response->assertStatus(201);
+        $response->assertJson([
+            'session_limit_type' => 'per_week',
+            'session_limit' => 3,
+        ]);
+
+        // 6. Unlimited clears any provided count
+        $unlimitedId = crypto_random_uuid_placeholder();
+        $response = $this->postJson('/api/plans', [
+            'id' => $unlimitedId,
+            'name' => 'All Access',
+            'billing_cycle' => 'monthly',
+            'price' => 60.00,
+            'session_limit_type' => 'unlimited',
+            'session_limit' => 99,
+        ]);
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('plans', [
+            'id' => $unlimitedId,
+            'session_limit_type' => 'unlimited',
+            'session_limit' => null,
+        ]);
+
+        // 7. Legacy clients sending only session_limit still map to total
+        $legacyId = crypto_random_uuid_placeholder();
+        $response = $this->postJson('/api/plans', [
+            'id' => $legacyId,
+            'name' => 'Legacy Punch',
+            'billing_cycle' => 'one_time',
+            'price' => 20.00,
+            'session_limit' => 5,
+        ]);
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('plans', [
+            'id' => $legacyId,
+            'session_limit_type' => 'total',
+            'session_limit' => 5,
+        ]);
+
         TenantContext::clear();
     }
 
@@ -563,6 +621,87 @@ class GymSaaSTest extends TestCase
             'flagged_for_review' => true,
         ]);
 
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 04: per_week session caps flag over_limit without expiring the subscription.
+     */
+    public function test_attendance_per_week_session_limit_enforcement(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        Carbon::setTestNow(Carbon::parse('2026-07-28 10:00:00')); // Tuesday
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Weekly',
+            'last_name' => 'Cap',
+            'status' => 'Active',
+        ]);
+
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => '2x Per Week',
+            'billing_cycle' => 'monthly',
+            'price' => 45.00,
+            'session_limit_type' => 'per_week',
+            'session_limit' => 2,
+        ]);
+
+        $memberPlan = MemberPlan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'plan_id' => $plan->id,
+            'starts_at' => Carbon::now()->startOfMonth(),
+            'expires_at' => Carbon::now()->addMonth(),
+            'status' => 'active',
+            'sessions_used' => 0,
+        ]);
+
+        // First two check-ins this week: within cap
+        foreach ([0, 1] as $offset) {
+            $response = $this->postJson('/api/attendances', [
+                'id' => crypto_random_uuid_placeholder(),
+                'member_id' => $member->id,
+                'member_plan_id' => $memberPlan->id,
+                'checked_in_at' => Carbon::now()->addHours($offset)->toIso8601String(),
+            ]);
+            $response->assertStatus(201);
+            $response->assertJson(['over_limit' => false]);
+        }
+
+        $memberPlan->refresh();
+        $this->assertEquals(2, $memberPlan->sessions_used);
+        $this->assertEquals('active', $memberPlan->status);
+        $this->assertTrue($memberPlan->isSessionLimitReached());
+
+        // Third check-in same week: over_limit advisory, subscription stays active
+        $response = $this->postJson('/api/attendances', [
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'member_plan_id' => $memberPlan->id,
+            'checked_in_at' => Carbon::now()->addHours(2)->toIso8601String(),
+        ]);
+        $response->assertStatus(201);
+        $response->assertJson(['over_limit' => true]);
+        $this->assertEquals('active', $memberPlan->fresh()->status);
+
+        // Next calendar week: cap resets
+        Carbon::setTestNow(Carbon::parse('2026-08-03 10:00:00')); // following Monday
+        $this->assertFalse($memberPlan->fresh()->isSessionLimitReached());
+
+        $response = $this->postJson('/api/attendances', [
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'member_plan_id' => $memberPlan->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+        ]);
+        $response->assertStatus(201);
+        $response->assertJson(['over_limit' => false]);
+
+        Carbon::setTestNow();
         TenantContext::clear();
     }
 

@@ -191,6 +191,8 @@ class DatabaseSeeder extends Seeder
                 'billing_cycle' => 'weekly',
                 'price' => 14.99,
                 'currency' => 'USD',
+                'session_limit_type' => 'per_week',
+                'session_limit' => 3,
                 'freeze_allowance_days' => 2,
                 'is_active' => true,
             ]
@@ -203,6 +205,8 @@ class DatabaseSeeder extends Seeder
                 'billing_cycle' => 'monthly',
                 'price' => 49.99,
                 'currency' => 'USD',
+                'session_limit_type' => 'unlimited',
+                'session_limit' => null,
                 'freeze_allowance_days' => 15,
                 'is_active' => true,
             ]
@@ -215,6 +219,8 @@ class DatabaseSeeder extends Seeder
                 'billing_cycle' => 'monthly',
                 'price' => 79.99,
                 'currency' => 'USD',
+                'session_limit_type' => 'unlimited',
+                'session_limit' => null,
                 'freeze_allowance_days' => 30,
                 'is_active' => true,
             ]
@@ -227,6 +233,8 @@ class DatabaseSeeder extends Seeder
                 'billing_cycle' => 'annual',
                 'price' => 479.99,
                 'currency' => 'USD',
+                'session_limit_type' => 'per_month',
+                'session_limit' => 20,
                 'freeze_allowance_days' => 45,
                 'is_active' => true,
             ]
@@ -239,6 +247,7 @@ class DatabaseSeeder extends Seeder
                 'billing_cycle' => 'monthly',
                 'price' => 99.00,
                 'currency' => 'USD',
+                'session_limit_type' => 'total',
                 'session_limit' => 10,
                 'freeze_allowance_days' => 0,
                 'is_active' => true,

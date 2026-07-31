@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Plan;
 use App\Models\MemberPlan;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class PlanController extends Controller
 {
@@ -22,6 +23,8 @@ class PlanController extends Controller
      */
     public function store(Request $request)
     {
+        $this->normalizeSessionLimitInput($request);
+
         $request->validate([
             'name' => 'required|string|max:255',
             'billing_cycle' => 'required|string|in:one_time,weekly,monthly,quarterly,annual,custom_days',
@@ -34,11 +37,17 @@ class PlanController extends Controller
                     if ($request->input('billing_cycle') !== 'custom_days' && $value !== null) {
                         $fail('The custom cycle days must be null unless billing cycle is custom_days.');
                     }
-                }
+                },
             ],
             'price' => 'required|numeric|min:0',
             'currency' => 'nullable|string|size:3',
-            'session_limit' => 'nullable|integer|min:1',
+            'session_limit_type' => ['nullable', 'string', Rule::in(Plan::SESSION_LIMIT_TYPES)],
+            'session_limit' => [
+                'nullable',
+                'integer',
+                'min:1',
+                Rule::requiredIf(fn () => $this->requiresSessionLimitCount($request->input('session_limit_type'))),
+            ],
             'access_hours' => 'nullable|array',
             'freeze_allowance_days' => 'nullable|integer|min:0',
             'is_active' => 'nullable|boolean',
@@ -51,6 +60,7 @@ class PlanController extends Controller
             'custom_cycle_days' => $request->input('custom_cycle_days'),
             'price' => $request->input('price'),
             'currency' => $request->input('currency', 'USD'),
+            'session_limit_type' => $request->input('session_limit_type', Plan::SESSION_LIMIT_UNLIMITED),
             'session_limit' => $request->input('session_limit'),
             'access_hours' => $request->input('access_hours'),
             'freeze_allowance_days' => $request->input('freeze_allowance_days', 0),
@@ -67,6 +77,8 @@ class PlanController extends Controller
     {
         $plan = Plan::findOrFail($id);
 
+        $this->normalizeSessionLimitInput($request, $plan);
+
         $request->validate([
             'name' => 'nullable|string|max:255',
             'billing_cycle' => 'nullable|string|in:one_time,weekly,monthly,quarterly,annual,custom_days',
@@ -80,11 +92,20 @@ class PlanController extends Controller
                     if ($cycle !== 'custom_days' && $value !== null) {
                         $fail('The custom cycle days must be null unless billing cycle is custom_days.');
                     }
-                }
+                },
             ],
             'price' => 'nullable|numeric|min:0',
             'currency' => 'nullable|string|size:3',
-            'session_limit' => 'nullable|integer|min:1',
+            'session_limit_type' => ['nullable', 'string', Rule::in(Plan::SESSION_LIMIT_TYPES)],
+            'session_limit' => [
+                'nullable',
+                'integer',
+                'min:1',
+                Rule::requiredIf(function () use ($request, $plan) {
+                    $type = $request->input('session_limit_type', $plan->session_limit_type);
+                    return $this->requiresSessionLimitCount($type);
+                }),
+            ],
             'access_hours' => 'nullable|array',
             'freeze_allowance_days' => 'nullable|integer|min:0',
             'is_active' => 'nullable|boolean',
@@ -109,7 +130,8 @@ class PlanController extends Controller
         }
 
         $plan->update($request->only([
-            'name', 'billing_cycle', 'custom_cycle_days', 'price', 'currency', 'session_limit', 'access_hours', 'freeze_allowance_days', 'is_active'
+            'name', 'billing_cycle', 'custom_cycle_days', 'price', 'currency',
+            'session_limit_type', 'session_limit', 'access_hours', 'freeze_allowance_days', 'is_active',
         ]));
 
         return response()->json($plan);
@@ -136,5 +158,43 @@ class PlanController extends Controller
         $plan->delete(); // Soft delete
 
         return response()->json(['success' => true]);
+    }
+
+    /**
+     * Infer session_limit_type from legacy clients that only send session_limit.
+     */
+    protected function normalizeSessionLimitInput(Request $request, ?Plan $existing = null): void
+    {
+        if (!$request->has('session_limit_type')) {
+            if ($request->has('session_limit')) {
+                $limit = $request->input('session_limit');
+                $request->merge([
+                    'session_limit_type' => ($limit === null || $limit === '')
+                        ? Plan::SESSION_LIMIT_UNLIMITED
+                        : Plan::SESSION_LIMIT_TOTAL,
+                ]);
+            } elseif ($existing) {
+                $request->merge([
+                    'session_limit_type' => $existing->session_limit_type,
+                ]);
+            } else {
+                $request->merge([
+                    'session_limit_type' => Plan::SESSION_LIMIT_UNLIMITED,
+                ]);
+            }
+        }
+
+        if ($request->input('session_limit_type') === Plan::SESSION_LIMIT_UNLIMITED) {
+            $request->merge(['session_limit' => null]);
+        }
+    }
+
+    protected function requiresSessionLimitCount(?string $type): bool
+    {
+        return in_array($type, [
+            Plan::SESSION_LIMIT_TOTAL,
+            Plan::SESSION_LIMIT_PER_WEEK,
+            Plan::SESSION_LIMIT_PER_MONTH,
+        ], true);
     }
 }

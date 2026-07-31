@@ -28,6 +28,7 @@ export interface CachePlan {
   custom_cycle_days: number | null;
   price: number;
   currency: string;
+  session_limit_type: 'unlimited' | 'total' | 'per_week' | 'per_month';
   session_limit: number | null;
   access_hours: any | null;
   freeze_allowance_days: number;

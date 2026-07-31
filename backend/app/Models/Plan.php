@@ -13,6 +13,33 @@ class Plan extends Model
 {
     use HasFactory, HasUuids, BelongsToTenant, SoftDeletes;
 
+    public const SESSION_LIMIT_UNLIMITED = 'unlimited';
+    public const SESSION_LIMIT_TOTAL = 'total';
+    public const SESSION_LIMIT_PER_WEEK = 'per_week';
+    public const SESSION_LIMIT_PER_MONTH = 'per_month';
+
+    public const SESSION_LIMIT_TYPES = [
+        self::SESSION_LIMIT_UNLIMITED,
+        self::SESSION_LIMIT_TOTAL,
+        self::SESSION_LIMIT_PER_WEEK,
+        self::SESSION_LIMIT_PER_MONTH,
+    ];
+
+    protected static function booted()
+    {
+        static::saving(function (Plan $plan) {
+            if (empty($plan->session_limit_type)) {
+                $plan->session_limit_type = $plan->session_limit === null
+                    ? self::SESSION_LIMIT_UNLIMITED
+                    : self::SESSION_LIMIT_TOTAL;
+            }
+
+            if ($plan->session_limit_type === self::SESSION_LIMIT_UNLIMITED) {
+                $plan->session_limit = null;
+            }
+        });
+    }
+
     protected $fillable = [
         'id',
         'tenant_id',
@@ -21,6 +48,7 @@ class Plan extends Model
         'custom_cycle_days',
         'price',
         'currency',
+        'session_limit_type',
         'session_limit',
         'access_hours',
         'freeze_allowance_days',
@@ -42,5 +70,20 @@ class Plan extends Model
     public function memberPlans(): HasMany
     {
         return $this->hasMany(MemberPlan::class, 'plan_id');
+    }
+
+    public function hasSessionCap(): bool
+    {
+        return $this->session_limit_type !== self::SESSION_LIMIT_UNLIMITED
+            && $this->session_limit !== null;
+    }
+
+    /**
+     * Lifetime punch-card caps expire the subscription; period caps only block until the window resets.
+     */
+    public function expiresSubscriptionOnSessionCap(): bool
+    {
+        return $this->session_limit_type === self::SESSION_LIMIT_TOTAL
+            && $this->session_limit !== null;
     }
 }

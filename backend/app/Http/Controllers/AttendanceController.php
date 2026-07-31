@@ -78,13 +78,8 @@ class AttendanceController extends Controller
             }
         }
 
-        // 4. Session Limit warning flag evaluation
-        $overLimit = false;
-        if ($memberPlan && $memberPlan->plan && $memberPlan->plan->session_limit !== null) {
-            if ($memberPlan->sessions_used >= $memberPlan->plan->session_limit) {
-                $overLimit = true;
-            }
-        }
+        // 4. Session Limit warning flag evaluation (total / per_week / per_month)
+        $overLimit = $memberPlan ? $memberPlan->isSessionLimitReached($checkedInAt) : false;
 
         // 5. Create the check-in record
         $attendance = Attendance::create([
@@ -163,12 +158,7 @@ class AttendanceController extends Controller
                     : $member->activeMemberPlan()->first();
 
                 // Advisory check: we always allow creations from offline sync
-                $overLimit = false;
-                if ($memberPlan && $memberPlan->plan && $memberPlan->plan->session_limit !== null) {
-                    if ($memberPlan->sessions_used >= $memberPlan->plan->session_limit) {
-                        $overLimit = true;
-                    }
-                }
+                $overLimit = $memberPlan ? $memberPlan->isSessionLimitReached($checkedInAt) : false;
 
                 $attendance = Attendance::create([
                     'id' => $id,
@@ -209,22 +199,28 @@ class AttendanceController extends Controller
                 'plan_name' => null,
                 'starts_at' => null,
                 'expires_at' => null,
+                'session_limit_type' => null,
                 'session_limit' => null,
                 'sessions_used' => 0,
+                'sessions_used_in_period' => 0,
                 'sessions_remaining' => 'unlimited',
             ]);
         }
 
-        $limit = $memberPlan->plan->session_limit;
-        $used = $memberPlan->sessions_used;
+        $plan = $memberPlan->plan;
+        $limit = $plan->session_limit;
+        $usedInPeriod = $memberPlan->sessionsUsedTowardLimit();
+        $hasCap = $plan->hasSessionCap();
 
         return response()->json([
-            'plan_name' => $memberPlan->plan->name,
+            'plan_name' => $plan->name,
             'starts_at' => $memberPlan->starts_at,
             'expires_at' => $memberPlan->expires_at,
+            'session_limit_type' => $plan->session_limit_type,
             'session_limit' => $limit,
-            'sessions_used' => $used,
-            'sessions_remaining' => $limit !== null ? max(0, $limit - $used) : 'unlimited',
+            'sessions_used' => $memberPlan->sessions_used,
+            'sessions_used_in_period' => $usedInPeriod,
+            'sessions_remaining' => $hasCap ? max(0, $limit - $usedInPeriod) : 'unlimited',
         ]);
     }
 }

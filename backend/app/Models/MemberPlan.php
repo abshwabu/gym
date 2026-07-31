@@ -67,16 +67,60 @@ class MemberPlan extends Model
     }
 
     /**
+     * Count check-ins that count toward the plan's current limit window.
+     */
+    public function sessionsUsedTowardLimit(?Carbon $at = null): int
+    {
+        $plan = $this->plan;
+        if (!$plan || !$plan->hasSessionCap()) {
+            return 0;
+        }
+
+        $at = $at ? $at->copy() : Carbon::now();
+
+        return match ($plan->session_limit_type) {
+            Plan::SESSION_LIMIT_TOTAL => (int) $this->sessions_used,
+            Plan::SESSION_LIMIT_PER_WEEK => $this->attendancesInRange(
+                $at->copy()->startOfWeek(),
+                $at->copy()->endOfWeek()
+            ),
+            Plan::SESSION_LIMIT_PER_MONTH => $this->attendancesInRange(
+                $at->copy()->startOfMonth(),
+                $at->copy()->endOfMonth()
+            ),
+            default => 0,
+        };
+    }
+
+    public function isSessionLimitReached(?Carbon $at = null): bool
+    {
+        $plan = $this->plan;
+        if (!$plan || !$plan->hasSessionCap()) {
+            return false;
+        }
+
+        return $this->sessionsUsedTowardLimit($at) >= $plan->session_limit;
+    }
+
+    protected function attendancesInRange(Carbon $start, Carbon $end): int
+    {
+        return Attendance::where('member_plan_id', $this->id)
+            ->whereBetween('checked_in_at', [$start, $end])
+            ->count();
+    }
+
+    /**
      * Increment the sessions used counter.
-     * If session limit is reached, set status to expired.
+     * Lifetime (total) caps expire the subscription when reached; period caps do not.
      */
     public function incrementSession(): bool
     {
         $plan = $this->plan;
-        
-        $this->increment('sessions_used');
 
-        if ($plan && $plan->session_limit !== null) {
+        $this->increment('sessions_used');
+        $this->refresh();
+
+        if ($plan && $plan->expiresSubscriptionOnSessionCap()) {
             if ($this->sessions_used >= $plan->session_limit) {
                 $this->update(['status' => 'expired']);
             }
