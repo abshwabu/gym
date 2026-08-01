@@ -1085,6 +1085,7 @@ export default function App() {
   const [memberFingerprints, setMemberFingerprints] = useState<FingerprintCredentialMeta[]>([]);
   const [fingerprintEnrolling, setFingerprintEnrolling] = useState(false);
   const [showAssignPlanModal, setShowAssignPlanModal] = useState(false);
+  const [assignPlanMode, setAssignPlanMode] = useState<'assign' | 'change'>('assign');
   const [assignPlanForm, setAssignPlanForm] = useState({
     plan_id: '',
     starts_at: new Date().toISOString().substring(0, 10),
@@ -1606,7 +1607,26 @@ export default function App() {
     }
   };
 
-  // Assign Plan to member (Optimistic UI)
+  const openAssignPlanModal = (mode: 'assign' | 'change') => {
+    const currentPlanId = selectedMemberProfile?.active_plan?.plan_id
+      || selectedMemberProfile?.active_plan?.plan?.id
+      || '';
+    const defaultPlanId = mode === 'change'
+      ? (plans.find((p: any) => p.id !== currentPlanId)?.id || plans[0]?.id || '')
+      : (plans[0]?.id || '');
+
+    setAssignPlanMode(mode);
+    setAssignPlanForm({
+      plan_id: defaultPlanId,
+      starts_at: new Date().toISOString().substring(0, 10),
+      expires_at: '',
+      manual_expiry: false,
+    });
+    setShowAssignPlanModal(true);
+  };
+
+  // Assign or change plan for a member (Optimistic UI).
+  // Backend cancels any prior active/frozen subscription when the create syncs.
   const handleAssignPlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMemberProfile) return;
@@ -1625,19 +1645,42 @@ export default function App() {
     };
 
     try {
+      const priorPlans = localMemberPlans.filter((p: any) =>
+        p.member_id === selectedMemberProfile.id
+        && ['active', 'frozen'].includes(String(p.status || '').toLowerCase())
+      );
+      const endedAt = new Date().toISOString();
+      for (const prior of priorPlans) {
+        await db.cache_member_plans.update(prior.id, {
+          status: 'cancelled',
+          expires_at: endedAt,
+          frozen_at: null,
+        });
+      }
+
       await SyncManager.queueWrite('member_plans', 'create', subId, payload);
       queryClient.invalidateQueries({ queryKey: ['members'] });
-      showToast(`Plan "${plan.name}" successfully assigned.`);
+      showToast(
+        assignPlanMode === 'change'
+          ? `Switched to "${plan.name}".`
+          : `Plan "${plan.name}" successfully assigned.`
+      );
       setShowAssignPlanModal(false);
-      
-      // Update selected profile view
+
       const freshSub = { ...payload, id: subId, plan };
       setSelectedMemberProfile((prev: any) => ({
         ...prev,
-        active_plan: freshSub
+        active_plan: freshSub,
+        subscriptions: [
+          ...(prev.subscriptions || [])
+            .map((s: any) => priorPlans.some((p: any) => p.id === s.id)
+              ? { ...s, status: 'cancelled', expires_at: endedAt, frozen_at: null }
+              : s),
+          freshSub,
+        ],
       }));
     } catch (err) {
-      showToast('Error assigning plan.', 'error');
+      showToast(assignPlanMode === 'change' ? 'Error changing plan.' : 'Error assigning plan.', 'error');
     }
   };
 
@@ -2480,7 +2523,10 @@ export default function App() {
                                       <td>
                                         <div style={{ display: 'flex', gap: '8px' }}>
                                           <button onClick={() => {
-                                            const activeSub = localMemberPlans.find((p: any) => p.member_id === member.id && p.status === 'active');
+                                            const activeSub = localMemberPlans.find((p: any) =>
+                                              p.member_id === member.id
+                                              && ['active', 'frozen'].includes(String(p.status || '').toLowerCase())
+                                            );
                                             const activePlan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) : null;
                                             setSelectedMemberProfile({
                                               ...member,
@@ -2925,8 +2971,13 @@ export default function App() {
                             </div>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
                               {hasPrivilege('members.create') && (
-                                <button onClick={() => handleToggleFreeze(selectedMemberProfile.active_plan)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', width: '100%' }}>
+                                <button onClick={() => handleToggleFreeze(selectedMemberProfile.active_plan)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', flex: 1 }}>
                                   {selectedMemberProfile.active_plan.status === 'frozen' ? 'Unfreeze' : 'Freeze'}
+                                </button>
+                              )}
+                              {hasPrivilege('members.create') && plans.length > 0 && (
+                                <button onClick={() => openAssignPlanModal('change')} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px', flex: 1 }}>
+                                  Change Plan
                                 </button>
                               )}
                             </div>
@@ -2935,10 +2986,7 @@ export default function App() {
                           <div>
                             <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>No active subscription plan.</p>
                             {hasPrivilege('members.create') && (
-                              <button onClick={() => {
-                                setAssignPlanForm({ plan_id: plans[0]?.id || '', starts_at: new Date().toISOString().substring(0, 10), expires_at: '', manual_expiry: false });
-                                setShowAssignPlanModal(true);
-                              }} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+                              <button onClick={() => openAssignPlanModal('assign')} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '12px' }}>
                                 Assign Membership Plan
                               </button>
                             )}
@@ -3040,15 +3088,22 @@ export default function App() {
               </div>
             )}
 
-            {/* Assign Plan Modal */}
+            {/* Assign / Change Plan Modal */}
             {showAssignPlanModal && (
               <div className="modal-overlay">
                 <div className="modal-card" style={{ zIndex: 1100 }}>
-                  <h3 className="modal-title">Assign Membership Plan</h3>
+                  <h3 className="modal-title">
+                    {assignPlanMode === 'change' ? 'Change Membership Plan' : 'Assign Membership Plan'}
+                  </h3>
+                  {assignPlanMode === 'change' && selectedMemberProfile?.active_plan && (
+                    <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                      Ends &ldquo;{selectedMemberProfile.active_plan.plan?.name || 'current plan'}&rdquo; and starts the selected plan from the start date below. Sessions reset; a new billing cycle applies.
+                    </p>
+                  )}
                   <form onSubmit={handleAssignPlanSubmit}>
                     <div className="form-group">
                       <label className="form-label" htmlFor="plan-select">Select Plan</label>
-                      <select id="plan-select" className="form-select" value={assignPlanForm.plan_id} onChange={e => setAssignPlanForm({ ...assignPlanForm, plan_id: e.target.value })}>
+                      <select id="plan-select" className="form-select" required value={assignPlanForm.plan_id} onChange={e => setAssignPlanForm({ ...assignPlanForm, plan_id: e.target.value })}>
                         {plans.map((p: any) => (
                           <option key={p.id} value={p.id}>{p.name} - ${p.price}</option>
                         ))}
@@ -3071,7 +3126,9 @@ export default function App() {
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
                       <button type="button" onClick={() => setShowAssignPlanModal(false)} className="btn btn-secondary">Cancel</button>
-                      <button type="submit" className="btn btn-primary">Confirm Assignment</button>
+                      <button type="submit" className="btn btn-primary">
+                        {assignPlanMode === 'change' ? 'Confirm Change' : 'Confirm Assignment'}
+                      </button>
                     </div>
                   </form>
                 </div>

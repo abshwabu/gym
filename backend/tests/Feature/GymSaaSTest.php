@@ -396,6 +396,88 @@ class GymSaaSTest extends TestCase
     }
 
     /**
+     * Changing a member's plan cancels the prior active/frozen subscription
+     * and starts a fresh cycle with sessions_used reset.
+     */
+    public function test_changing_member_plan_cancels_previous_and_starts_new_cycle(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'Switch',
+            'last_name' => 'PlanTest',
+            'status' => 'Active',
+        ]);
+
+        $basic = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => 'Basic Monthly',
+            'billing_cycle' => 'monthly',
+            'price' => 40.00,
+        ]);
+
+        $premium = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => 'Premium Quarterly',
+            'billing_cycle' => 'quarterly',
+            'price' => 100.00,
+        ]);
+
+        $startsAt = Carbon::now();
+        $assign = $this->postJson("/api/members/{$member->id}/plans", [
+            'plan_id' => $basic->id,
+            'starts_at' => $startsAt->toIso8601String(),
+        ]);
+        $assign->assertStatus(201);
+        $oldPlanId = $assign->json('id');
+
+        MemberPlan::where('id', $oldPlanId)->update(['sessions_used' => 5]);
+
+        $switchStarts = Carbon::now()->addHour();
+        $switch = $this->postJson("/api/members/{$member->id}/plans", [
+            'plan_id' => $premium->id,
+            'starts_at' => $switchStarts->toIso8601String(),
+        ]);
+        $switch->assertStatus(201);
+        $newPlanId = $switch->json('id');
+
+        $oldPlan = MemberPlan::find($oldPlanId);
+        $this->assertEquals('cancelled', $oldPlan->status);
+        $this->assertEquals(Carbon::now()->toDateString(), $oldPlan->expires_at->toDateString());
+        $this->assertEquals(5, $oldPlan->sessions_used);
+
+        $newPlan = MemberPlan::find($newPlanId);
+        $this->assertEquals('active', $newPlan->status);
+        $this->assertEquals($premium->id, $newPlan->plan_id);
+        $this->assertEquals(0, $newPlan->sessions_used);
+        $this->assertEquals(
+            $switchStarts->copy()->addMonths(3)->toDateString(),
+            $newPlan->expires_at->toDateString()
+        );
+
+        $this->assertEquals(1, MemberPlan::where('member_id', $member->id)->where('status', 'active')->count());
+        $this->assertEquals($newPlanId, $member->fresh()->activeMemberPlan->id);
+
+        // Frozen subscriptions are also superseded on change
+        $this->postJson("/api/member-plans/{$newPlanId}/freeze")->assertStatus(200);
+        $this->assertEquals('frozen', MemberPlan::find($newPlanId)->status);
+
+        $afterFreeze = $this->postJson("/api/members/{$member->id}/plans", [
+            'plan_id' => $basic->id,
+            'starts_at' => Carbon::now()->toIso8601String(),
+        ]);
+        $afterFreeze->assertStatus(201);
+
+        $this->assertEquals('cancelled', MemberPlan::find($newPlanId)->fresh()->status);
+        $this->assertNull(MemberPlan::find($newPlanId)->fresh()->frozen_at);
+        $this->assertEquals(1, MemberPlan::where('member_id', $member->id)->whereIn('status', ['active', 'frozen'])->count());
+
+        TenantContext::clear();
+    }
+
+    /**
      * Module 03: Test Subscription Freeze, Unfreeze, and Expiry Extension capping
      */
     public function test_plan_freeze_and_unfreeze_capping(): void

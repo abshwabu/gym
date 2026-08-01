@@ -7,6 +7,7 @@ use App\Models\Plan;
 use App\Models\MemberPlan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class MemberPlanController extends Controller
 {
@@ -25,7 +26,11 @@ class MemberPlanController extends Controller
     }
 
     /**
-     * Assign a plan to a member.
+     * Assign a plan to a member (or switch plans).
+     *
+     * Any existing active/frozen subscription is cancelled first so the member
+     * never has two concurrent current plans. The new plan starts with a fresh
+     * session counter and a new billing cycle from starts_at.
      */
     public function store(Request $request, $memberId)
     {
@@ -57,19 +62,40 @@ class MemberPlanController extends Controller
 
         $clientUuid = $request->input('client_uuid') ?: $request->input('id');
 
-        $memberPlan = MemberPlan::create([
-            'id' => $clientUuid ?: (string) \Illuminate\Support\Str::uuid(),
-            'tenant_id' => \App\Services\TenantContext::getTenantId(),
-            'member_id' => $member->id,
-            'plan_id' => $plan->id,
-            'starts_at' => $startsAt,
-            'expires_at' => $expiresAt,
-            'status' => 'active',
-            'sessions_used' => 0,
-            'client_uuid' => $clientUuid,
-        ]);
+        $memberPlan = DB::transaction(function () use ($member, $plan, $startsAt, $expiresAt, $clientUuid) {
+            $this->cancelCurrentSubscriptions($member->id);
+
+            return MemberPlan::create([
+                'id' => $clientUuid ?: (string) \Illuminate\Support\Str::uuid(),
+                'tenant_id' => \App\Services\TenantContext::getTenantId(),
+                'member_id' => $member->id,
+                'plan_id' => $plan->id,
+                'starts_at' => $startsAt,
+                'expires_at' => $expiresAt,
+                'status' => 'active',
+                'sessions_used' => 0,
+                'client_uuid' => $clientUuid,
+            ]);
+        });
 
         return response()->json($memberPlan->load('plan'), 201);
+    }
+
+    /**
+     * End any current (active/frozen) subscriptions for a member.
+     */
+    protected function cancelCurrentSubscriptions(string $memberId): void
+    {
+        MemberPlan::where('member_id', $memberId)
+            ->whereIn('status', ['active', 'frozen'])
+            ->get()
+            ->each(function (MemberPlan $subscription) {
+                $subscription->update([
+                    'status' => 'cancelled',
+                    'expires_at' => Carbon::now(),
+                    'frozen_at' => null,
+                ]);
+            });
     }
 
     /**
