@@ -525,7 +525,7 @@ const SelfCheckinKiosk = ({ members, handleCheckin, plans, localMemberPlans }: {
     } else {
       setKioskStatus('error');
       const reasons: Record<string, string> = {
-        'no_plan': 'No active membership plan found.',
+        'no_plan': 'Access denied — no active membership plan.',
         'frozen': 'Your membership plan is frozen. Please see front desk.',
         'expired': 'Your membership plan is expired. Please renew.',
         'over_limit': 'Check-in limit reached for this membership.',
@@ -1400,35 +1400,41 @@ export default function App() {
     const member = members.find((m: any) => m.id === memberId);
     if (!member) return { success: false, reason: 'not_found' };
 
-    // Get active subscription
+    // Get active / frozen subscription (kiosk + desk share this gate)
     const mAny = member as any;
     const activeSub = localMemberPlans.find((p: any) => p.member_id === memberId && p.status?.toLowerCase() === 'active')
-      || (mAny.active_member_plan ? { ...mAny.active_member_plan, plan_id: mAny.active_member_plan.plan_id || mAny.active_member_plan.plan?.id } : null)
-      || (mAny.activeMemberPlan ? { ...mAny.activeMemberPlan, plan_id: mAny.activeMemberPlan.plan_id || mAny.activeMemberPlan.plan?.id } : null)
-      || (mAny.active_plan ? { ...mAny.active_plan, plan_id: mAny.active_plan.plan_id || mAny.active_plan.plan?.id } : null);
+      || (mAny.active_member_plan?.status?.toLowerCase() === 'active' ? { ...mAny.active_member_plan, plan_id: mAny.active_member_plan.plan_id || mAny.active_member_plan.plan?.id } : null)
+      || (mAny.activeMemberPlan?.status?.toLowerCase() === 'active' ? { ...mAny.activeMemberPlan, plan_id: mAny.activeMemberPlan.plan_id || mAny.activeMemberPlan.plan?.id } : null)
+      || (mAny.active_plan?.status?.toLowerCase() === 'active' ? { ...mAny.active_plan, plan_id: mAny.active_plan.plan_id || mAny.active_plan.plan?.id } : null);
 
-    const plan = activeSub ? plans.find((pl: any) => pl.id === activeSub.plan_id) || activeSub.plan : null;
+    const frozenSub = !activeSub
+      ? (localMemberPlans.find((p: any) => p.member_id === memberId && p.status?.toLowerCase() === 'frozen')
+        || (mAny.active_member_plan?.status?.toLowerCase() === 'frozen' ? { ...mAny.active_member_plan, plan_id: mAny.active_member_plan.plan_id || mAny.active_member_plan.plan?.id } : null)
+        || (mAny.activeMemberPlan?.status?.toLowerCase() === 'frozen' ? { ...mAny.activeMemberPlan, plan_id: mAny.activeMemberPlan.plan_id || mAny.activeMemberPlan.plan?.id } : null)
+        || (mAny.active_plan?.status?.toLowerCase() === 'frozen' ? { ...mAny.active_plan, plan_id: mAny.active_plan.plan_id || mAny.active_plan.plan?.id } : null))
+      : null;
 
-    // Run checkin warnings
+    const plan = activeSub
+      ? plans.find((pl: any) => pl.id === activeSub.plan_id) || activeSub.plan
+      : (frozenSub ? plans.find((pl: any) => pl.id === frozenSub.plan_id) || frozenSub.plan : null);
+
+    // Run checkin warnings — no active plan must always deny (including Active members)
     if (!force) {
+      if (frozenSub) {
+        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'frozen' });
+        return { success: false, reason: 'frozen' };
+      }
       if (!activeSub) {
-        if (member.status?.toLowerCase() !== 'active') {
-          if (!isKiosk) setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
-          return { success: false, reason: 'no_plan' };
-        }
-      } else {
-        if (activeSub.status?.toLowerCase() === 'frozen') {
-          if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'frozen' });
-          return { success: false, reason: 'frozen' };
-        }
-        if (activeSub.expires_at && new Date(activeSub.expires_at) < new Date()) {
-          if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'expired' });
-          return { success: false, reason: 'expired' };
-        }
-        if (plan && isSessionLimitReached(plan, activeSub.sessions_used || 0, attendances, activeSub.id)) {
-          if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'over_limit' });
-          return { success: false, reason: 'over_limit' };
-        }
+        if (!isKiosk) setAdvisoryWarning({ member, plan: null, type: 'no_plan' });
+        return { success: false, reason: 'no_plan' };
+      }
+      if (activeSub.expires_at && new Date(activeSub.expires_at) < new Date()) {
+        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'expired' });
+        return { success: false, reason: 'expired' };
+      }
+      if (plan && isSessionLimitReached(plan, activeSub.sessions_used || 0, attendances, activeSub.id)) {
+        if (!isKiosk) setAdvisoryWarning({ member, plan, type: 'over_limit' });
+        return { success: false, reason: 'over_limit' };
       }
     }
 

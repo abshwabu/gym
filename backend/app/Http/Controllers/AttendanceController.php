@@ -68,12 +68,18 @@ class AttendanceController extends Controller
             ? (MemberPlan::find($memberPlanId) ?: MemberPlan::where('client_uuid', $memberPlanId)->first()) 
             : $member->activeMemberPlan()->first();
 
-        // 3. Advisory Check for Expired / Cancelled Subscriptions
-        if ($memberPlan && in_array($memberPlan->status, ['expired', 'cancelled'])) {
+        // 3. Online gate: no plan / expired / cancelled / frozen → deny
+        // Offline (from_offline) still records and flags for review (append-only sync).
+        if (!$memberPlan) {
             if (!$fromOffline) {
-                // Regular online check-in: Reject
                 return response()->json([
-                    'message' => "Cannot check in: member's plan is currently {$memberPlan->status}."
+                    'message' => 'Cannot check in: member has no active membership plan.',
+                ], 422);
+            }
+        } elseif (in_array($memberPlan->status, ['expired', 'cancelled', 'frozen'], true)) {
+            if (!$fromOffline) {
+                return response()->json([
+                    'message' => "Cannot check in: member's plan is currently {$memberPlan->status}.",
                 ], 422);
             }
         }
@@ -100,7 +106,7 @@ class AttendanceController extends Controller
         return response()->json([
             'attendance' => $attendance->load(['member', 'memberPlan.plan']),
             'over_limit' => $overLimit,
-            'flagged_for_review' => ($memberPlan && in_array($memberPlan->status, ['expired', 'cancelled'])),
+            'flagged_for_review' => (!$memberPlan || in_array($memberPlan->status, ['expired', 'cancelled', 'frozen'], true)),
         ], 201);
     }
 
@@ -178,7 +184,7 @@ class AttendanceController extends Controller
                     'id' => $id,
                     'status' => 'created',
                     'over_limit' => $overLimit,
-                    'flagged_for_review' => ($memberPlan && in_array($memberPlan->status, ['expired', 'cancelled'])),
+                    'flagged_for_review' => (!$memberPlan || in_array($memberPlan->status, ['expired', 'cancelled', 'frozen'], true)),
                 ];
             }
         });

@@ -3,13 +3,16 @@
 namespace Tests\Feature;
 
 use App\Models\Member;
+use App\Models\MemberPlan;
 use App\Models\MemberWebAuthnCredential;
+use App\Models\Plan;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\TenantContext;
 use App\Services\TenantProvisioning;
 use App\Services\WebAuthnService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
@@ -173,6 +176,23 @@ class FingerprintWebAuthnTest extends TestCase
             'first_name' => 'Biometric',
             'last_name' => 'Checkin',
             'status' => 'Active',
+        ]);
+
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => 'Fingerprint Plan',
+            'billing_cycle' => 'monthly',
+            'price' => 40.00,
+        ]);
+
+        MemberPlan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'plan_id' => $plan->id,
+            'starts_at' => Carbon::now(),
+            'expires_at' => Carbon::now()->addMonth(),
+            'status' => 'active',
+            'sessions_used' => 0,
         ]);
 
         $attendanceId = crypto_random_uuid_placeholder();

@@ -608,6 +608,23 @@ class GymSaaSTest extends TestCase
             'status' => 'Active',
         ]);
 
+        $plan = Plan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'name' => 'Idempotent Plan',
+            'billing_cycle' => 'monthly',
+            'price' => 40.00,
+        ]);
+
+        MemberPlan::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'plan_id' => $plan->id,
+            'starts_at' => Carbon::now(),
+            'expires_at' => Carbon::now()->addMonth(),
+            'status' => 'active',
+            'sessions_used' => 0,
+        ]);
+
         $attendanceId = crypto_random_uuid_placeholder();
 
         // First check-in
@@ -630,6 +647,52 @@ class GymSaaSTest extends TestCase
         ]);
 
         $response->assertStatus(200);
+
+        TenantContext::clear();
+    }
+
+    /**
+     * Module 04: Online check-in must deny members with no active plan (kiosk / QR / manual).
+     */
+    public function test_attendance_rejects_member_with_no_active_plan(): void
+    {
+        $this->actingAs($this->userA);
+        TenantContext::setTenant($this->tenantA);
+
+        $member = Member::create([
+            'id' => crypto_random_uuid_placeholder(),
+            'first_name' => 'NoPlan',
+            'last_name' => 'Member',
+            'status' => 'Active',
+        ]);
+
+        $response = $this->postJson('/api/attendances', [
+            'id' => crypto_random_uuid_placeholder(),
+            'member_id' => $member->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+            'method' => 'kiosk',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonFragment([
+                'message' => 'Cannot check in: member has no active membership plan.',
+            ]);
+        $this->assertDatabaseMissing('attendances', ['member_id' => $member->id]);
+
+        // Offline sync may still append but must flag for review
+        $offlineId = crypto_random_uuid_placeholder();
+        $response = $this->postJson('/api/attendances', [
+            'id' => $offlineId,
+            'member_id' => $member->id,
+            'checked_in_at' => Carbon::now()->toIso8601String(),
+            'method' => 'kiosk',
+            'from_offline' => true,
+        ]);
+        $response->assertStatus(201)
+            ->assertJson([
+                'flagged_for_review' => true,
+            ]);
+        $this->assertDatabaseHas('attendances', ['id' => $offlineId]);
 
         TenantContext::clear();
     }
